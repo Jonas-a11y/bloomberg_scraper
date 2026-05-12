@@ -3,6 +3,16 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+
+
+class NoCacheStaticMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        if request.url.path.endswith((".js", ".css", ".html")) or request.url.path == "/":
+            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        return response
 
 from app.database import init_db
 from app.scheduler import start_scheduler, stop_scheduler
@@ -18,6 +28,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Bloomberg Scraper", lifespan=lifespan)
+app.add_middleware(NoCacheStaticMiddleware)
 
 app.include_router(dashboard.router, prefix="/api")
 app.include_router(billionaires.router, prefix="/api")
