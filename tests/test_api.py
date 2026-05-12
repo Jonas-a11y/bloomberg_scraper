@@ -96,3 +96,39 @@ def test_search(seeded_client):
     data = resp.json()
     assert len(data) >= 1
     assert "Person 3" in data[0]["common_name"]
+
+
+def test_analytics_by_industry(seeded_client):
+    resp = seeded_client.get("/api/analytics/by-industry")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) > 0
+    assert "industry" in data[0]
+    assert "total_wealth" in data[0]
+
+
+def test_analytics_by_country(seeded_client):
+    resp = seeded_client.get("/api/analytics/by-country")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) > 0
+
+
+def test_analytics_demographics(seeded_client):
+    resp = seeded_client.get("/api/analytics/demographics")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "gender" in data
+    assert "age_distribution" in data
+
+
+def test_snapshots_list(seeded_client):
+    resp = seeded_client.get("/api/snapshots")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) >= 1
+
+
+def test_snapshots_compare(seeded_client):
+    resp = seeded_client.get("/api/snapshots/compare?from_date=2026-05-12&to_date=2026-05-12")
+    assert resp.status_code == 200
