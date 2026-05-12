@@ -1,2 +1,8 @@
 .playwright-mcp
-.venv.superpowers/
+.superpowers/
+.venv/
+.pytest_cache/
+__pycache__/
+data/
+*.db
+.DS_Store
