@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Bloomberg Scraper</title>
-    <link rel="stylesheet" href="/style.css?v=3">
+    <link rel="stylesheet" href="/style.css?v=4">
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 </head>
@@ -242,27 +242,21 @@
                     <label><input type="radio" value="json" x-model="exportFormat"> JSON</label>
                 </div>
             </div>
-            <form :action="exportHref()" method="GET">
-                <button type="submit" class="btn-primary">Download</button>
-            </form>
+            <a class="btn-primary" :href="exportHref()">Download</a>
             <p class="muted">API: <code x-text="exportUrl()"></code></p>
         </div>
         <div class="export-card">
             <h3>Master CSV</h3>
             <p>All historical data in one file, sorted by date and rank. Ready for data science.</p>
-            <form action="/api/export/bloomberg_billionaires_master.csv" method="GET">
-                <button type="submit" class="btn-primary">Download bloomberg_billionaires_master.csv</button>
-            </form>
+            <a class="btn-primary" href="/api/export/bloomberg_billionaires_master.csv">Download bloomberg_billionaires_master.csv</a>
         </div>
         <div class="export-card">
             <h3>Download Database</h3>
             <p>Download the raw SQLite file for local analysis.</p>
-            <form action="/api/export/bloomberg.db" method="GET">
-                <button type="submit" class="btn-primary">Download bloomberg.db</button>
-            </form>
+            <a class="btn-primary" href="/api/export/bloomberg.db">Download bloomberg.db</a>
         </div>
     </main>
 
-    <script src="/app.js?v=3"></script>
+    <script src="/app.js?v=4"></script>
 </body>
 </html>
