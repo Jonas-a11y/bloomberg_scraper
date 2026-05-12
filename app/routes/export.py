@@ -79,3 +79,30 @@ def export_db():
         media_type="application/x-sqlite3",
         filename="bloomberg.db",
     )
+
+
+@router.get("/export/master")
+def export_master():
+    conn = get_db()
+    cursor = conn.execute("""
+        SELECT * FROM billionaires ORDER BY scraped_at, rank
+    """)
+    rows = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+
+    if not rows:
+        return StreamingResponse(
+            io.BytesIO(b""),
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=bloomberg_billionaires_master.csv"},
+        )
+
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=rows[0].keys())
+    writer.writeheader()
+    writer.writerows(rows)
+    return StreamingResponse(
+        io.BytesIO(output.getvalue().encode()),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=bloomberg_billionaires_master.csv"},
+    )
