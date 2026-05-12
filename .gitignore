@@ -1,4 +1,4 @@
-.playwright-mcp
+.playwright-mcp/
 .superpowers/
 .venv/
 .pytest_cache/
@@ -6,3 +6,11 @@ __pycache__/
 data/
 *.db
 .DS_Store
+
+# Generated data files
+*.csv
+*.ipynb
+
+# Standalone scripts (not part of the web app)
+scrape_bloomberg.py
+build_master_dataset.py

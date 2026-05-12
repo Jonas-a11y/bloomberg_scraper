@@ -139,6 +139,17 @@ code { background: #f0f0f0; padding: 2px 6px; border-radius: 3px; font-size: 12p
 
 h3 { font-size: 15px; margin-bottom: 12px; }
 
+.field-selector { margin-bottom: 16px; }
+.field-selector-header { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+.field-selector-header label { color: #666; width: 80px; font-size: 13px; }
+.field-selector-actions { display: flex; gap: 8px; }
+.btn-sm { background: none; border: 1px solid #ddd; padding: 5px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; }
+.btn-sm:hover { border-color: #4ecdc4; color: #4ecdc4; }
+.field-groups { background: #fafafa; border: 1px solid #e8e8e8; border-radius: 8px; padding: 16px; display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px; }
+.field-group h4 { font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+.field-checkbox { display: flex; align-items: center; gap: 4px; margin-bottom: 4px; font-size: 13px; cursor: pointer; }
+.field-checkbox input { accent-color: #4ecdc4; }
+
 @media (max-width: 768px) {
     .stats-grid { grid-template-columns: 1fr; }
     .aggregate-grid { grid-template-columns: 1fr; }

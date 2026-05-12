@@ -6,7 +6,7 @@ from datetime import datetime
 
 from apscheduler.schedulers.background import BackgroundScheduler
 
-from app.database import get_db, insert_billionaires
+from app.database import get_db, insert_scrape_data
 from app.scraper import scrape_billionaires
 
 logger = logging.getLogger(__name__)
@@ -51,7 +51,7 @@ def run_scrape():
     start = time.time()
     try:
         rows = scrape_billionaires()
-        insert_billionaires(None, rows)
+        insert_scrape_data(None, rows)
         duration_ms = int((time.time() - start) * 1000)
         conn = get_db()
         conn.execute(

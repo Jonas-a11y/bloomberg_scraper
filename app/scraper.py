@@ -140,5 +140,6 @@ def scrape_billionaires():
     for person in data:
         row = flatten_person(person)
         row["scraped_at"] = scraped_at
+        row["updated_at"] = scraped_at
         rows.append(row)
     return rows

@@ -4,7 +4,7 @@ import tempfile
 import pytest
 from fastapi.testclient import TestClient
 
-from app.database import init_db, insert_billionaires
+from app.database import init_db, insert_scrape_data
 
 
 @pytest.fixture
@@ -23,6 +23,7 @@ def seeded_client(client, tmp_path):
     rows = [
         {
             "scraped_at": "2026-05-12T08:00:00",
+            "updated_at": "2026-05-12T08:00:00",
             "person_id": i,
             "rank": i,
             "common_name": f"Person {i}",
@@ -61,7 +62,7 @@ def seeded_client(client, tmp_path):
         }
         for i in range(1, 6)
     ]
-    insert_billionaires(db_path, rows)
+    insert_scrape_data(db_path, rows)
     return client
 
 

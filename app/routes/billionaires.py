@@ -1,6 +1,5 @@
 from fastapi import APIRouter, Query
 
-import app.database
 from app.database import get_db
 
 router = APIRouter()
@@ -20,22 +19,22 @@ def list_billionaires(
     params = []
 
     if snapshot:
-        conditions.append("DATE(scraped_at) = ?")
+        conditions.append("DATE(s.scraped_at) = ?")
         params.append(snapshot)
     else:
-        conditions.append("scraped_at = (SELECT MAX(scraped_at) FROM billionaires)")
+        conditions.append("s.scraped_at = (SELECT MAX(scraped_at) FROM snapshots)")
 
     if country:
-        conditions.append("citizenship = ?")
+        conditions.append("p.citizenship = ?")
         params.append(country)
     if industry:
-        conditions.append("industry = ?")
+        conditions.append("p.industry = ?")
         params.append(industry)
     if gender:
-        conditions.append("gender = ?")
+        conditions.append("p.gender = ?")
         params.append(gender)
     if q:
-        conditions.append("common_name LIKE ?")
+        conditions.append("p.common_name LIKE ?")
         params.append(f"%{q}%")
 
     where = " AND ".join(conditions)
@@ -44,14 +43,17 @@ def list_billionaires(
     if sort_col not in allowed_sorts:
         sort_col = "rank"
     sort_dir = "DESC" if sort.startswith("-") else "ASC"
+    qualified_sort = f"s.{sort_col}" if sort_col in ("rank", "net_worth_usd", "last_change_usd", "ytd_change_usd") else f"p.{sort_col}"
 
     data_sql = f"""
-        SELECT person_id, rank, common_name, full_name, citizenship, age,
-               birth_year, gender, gender_confidence, industry, sector,
-               net_worth_usd, last_change_usd, last_change_pct,
-               ytd_change_usd, ytd_change_pct
-        FROM billionaires WHERE {where}
-        ORDER BY {sort_col} {sort_dir}
+        SELECT p.person_id, s.rank, p.common_name, p.full_name, p.citizenship, p.age,
+               p.birth_year, p.gender, p.gender_confidence, p.industry, p.sector,
+               s.net_worth_usd, s.last_change_usd, s.last_change_pct,
+               s.ytd_change_usd, s.ytd_change_pct
+        FROM snapshots s
+        JOIN persons p ON s.person_id = p.person_id
+        WHERE {where}
+        ORDER BY {qualified_sort} {sort_dir}
     """
     cursor = conn.execute(data_sql, params)
     rows = [dict(row) for row in cursor.fetchall()]
@@ -65,7 +67,7 @@ def person_history(person_id: int):
     conn = get_db()
     cursor = conn.execute("""
         SELECT scraped_at, rank, net_worth_usd, last_change_usd, ytd_change_usd
-        FROM billionaires WHERE person_id = ?
+        FROM snapshots WHERE person_id = ?
         ORDER BY scraped_at
     """, (person_id,))
     rows = [dict(row) for row in cursor.fetchall()]
@@ -77,10 +79,12 @@ def person_history(person_id: int):
 def search(q: str = Query(..., min_length=1)):
     conn = get_db()
     cursor = conn.execute("""
-        SELECT DISTINCT person_id, common_name, net_worth_usd, rank
-        FROM billionaires
-        WHERE common_name LIKE ? AND scraped_at = (SELECT MAX(scraped_at) FROM billionaires)
-        ORDER BY rank LIMIT 10
+        SELECT p.person_id, p.common_name, s.net_worth_usd, s.rank
+        FROM snapshots s
+        JOIN persons p ON s.person_id = p.person_id
+        WHERE p.common_name LIKE ?
+          AND s.scraped_at = (SELECT MAX(scraped_at) FROM snapshots)
+        ORDER BY s.rank LIMIT 10
     """, (f"%{q}%",))
     rows = [dict(row) for row in cursor.fetchall()]
     conn.close()

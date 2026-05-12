@@ -1,7 +1,7 @@
 import os
 import tempfile
 
-from app.database import get_db, init_db, insert_billionaires, get_latest_snapshot
+from app.database import get_db, init_db, insert_scrape_data, get_latest_snapshot
 
 
 def test_init_db_creates_tables():
@@ -12,18 +12,20 @@ def test_init_db_creates_tables():
         cursor = db.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
         tables = [row[0] for row in cursor.fetchall()]
         db.close()
-        assert "billionaires" in tables
+        assert "persons" in tables
+        assert "snapshots" in tables
         assert "scrape_runs" in tables
         assert "schedule_config" in tables
 
 
-def test_insert_and_query_billionaires():
+def test_insert_and_query():
     with tempfile.TemporaryDirectory() as tmp:
         db_path = os.path.join(tmp, "test.db")
         init_db(db_path)
         rows = [
             {
                 "scraped_at": "2026-05-12T08:00:00",
+                "updated_at": "2026-05-12T08:00:00",
                 "person_id": 1,
                 "rank": 1,
                 "common_name": "Test Person",
@@ -61,7 +63,7 @@ def test_insert_and_query_billionaires():
                 "confidence": 3,
             }
         ]
-        insert_billionaires(db_path, rows)
+        insert_scrape_data(db_path, rows)
         result = get_latest_snapshot(db_path)
         assert len(result) == 1
         assert result[0]["common_name"] == "Test Person"

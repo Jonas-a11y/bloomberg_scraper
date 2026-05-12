@@ -19,14 +19,29 @@ function app() {
         exportFormat: 'csv',
         exportFrom: '',
         exportTo: '',
+        masterFields: [],
+        allFields: [],
+        defaultFields: [],
+        fieldsByGroup: {
+            identity: ['person_id', 'common_name', 'full_name', 'first_name', 'last_name', 'middle_name', 'slug'],
+            demographics: ['citizenship', 'age', 'birth_year', 'gender', 'gender_confidence'],
+            financial: ['scraped_at', 'rank', 'net_worth_usd', 'last_change_usd', 'last_change_pct', 'ytd_change_usd', 'ytd_change_pct'],
+            assets: ['public_assets_total', 'private_assets_total', 'cash_assets_total', 'public_assets_json', 'private_assets_json', 'cash_asset_value', 'liabilities_value', 'liabilities_note'],
+            personal: ['industry', 'sector', 'biography', 'overview', 'net_worth_summary', 'schools_json', 'facts_json', 'milestones_json'],
+            metadata: ['confidence'],
+        },
 
         async init() {
-            const [dashRes, statusRes] = await Promise.all([
+            const [dashRes, statusRes, fieldsRes] = await Promise.all([
                 fetch('/api/dashboard').then(r => r.json()),
                 fetch('/api/scraper/status').then(r => r.json()),
+                fetch('/api/export/fields').then(r => r.json()),
             ]);
             this.dashboard = dashRes;
             this.scraperStatus = statusRes;
+            this.allFields = fieldsRes.fields;
+            this.defaultFields = fieldsRes.defaults;
+            this.masterFields = [...fieldsRes.defaults];
             this.loadFilterOptions();
         },
 
@@ -206,18 +221,34 @@ function app() {
 
         exportHref() {
             const params = new URLSearchParams();
-            params.set('format', this.exportFormat);
             params.set('scope', this.exportScope);
             if (this.exportScope === 'range') {
                 params.set('from_date', this.exportFrom);
                 params.set('to_date', this.exportTo);
             }
-            return `/api/export?${params}`;
+            if (this.masterFields.length > 0 && this.masterFields.length < this.allFields.length) {
+                params.set('fields', this.masterFields.join(','));
+            }
+            const ext = this.exportFormat === 'json' ? 'json' : 'csv';
+            return `/api/export/bloomberg_billionaires.${ext}?${params}`;
         },
 
-        exportUrl() {
-            return `GET ${this.exportHref()}`;
+        selectAllFields() {
+            this.masterFields = [...this.allFields];
         },
+
+        selectDefaultFields() {
+            this.masterFields = [...this.defaultFields];
+        },
+
+        deselectAllFields() {
+            this.masterFields = [];
+        },
+
+        fieldLabel(f) {
+            return f.replace(/_/g, ' ').replace(/\bjson\b/g, '(JSON)').replace(/\busd\b/g, '(USD)').replace(/\bpct\b/g, '(%)');
+        },
+
 
         formatWealth(v) {
             if (!v) return '$0';

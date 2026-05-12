@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Bloomberg Scraper</title>
-    <link rel="stylesheet" href="/style.css?v=4">
+    <link rel="stylesheet" href="/style.css?v=9">
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 </head>
@@ -242,21 +242,64 @@
                     <label><input type="radio" value="json" x-model="exportFormat"> JSON</label>
                 </div>
             </div>
-            <a class="btn-primary" :href="exportHref()">Download</a>
-            <p class="muted">API: <code x-text="exportUrl()"></code></p>
-        </div>
-        <div class="export-card">
-            <h3>Master CSV</h3>
-            <p>All historical data in one file, sorted by date and rank. Ready for data science.</p>
-            <a class="btn-primary" href="/api/export/bloomberg_billionaires_master.csv">Download bloomberg_billionaires_master.csv</a>
+            <div class="field-selector">
+                <div class="field-selector-header">
+                    <label>Fields:</label>
+                    <div class="field-selector-actions">
+                        <button class="btn-sm" @click="selectAllFields()">Select All</button>
+                        <button class="btn-sm" @click="selectDefaultFields()">Defaults</button>
+                        <button class="btn-sm" @click="deselectAllFields()">Clear</button>
+                    </div>
+                </div>
+                <div class="field-groups">
+                    <div class="field-group">
+                        <h4>Identity</h4>
+                        <template x-for="f in fieldsByGroup.identity" :key="f">
+                            <label class="field-checkbox"><input type="checkbox" :value="f" x-model="masterFields"><span x-text="fieldLabel(f)"></span></label>
+                        </template>
+                    </div>
+                    <div class="field-group">
+                        <h4>Demographics</h4>
+                        <template x-for="f in fieldsByGroup.demographics" :key="f">
+                            <label class="field-checkbox"><input type="checkbox" :value="f" x-model="masterFields"><span x-text="fieldLabel(f)"></span></label>
+                        </template>
+                    </div>
+                    <div class="field-group">
+                        <h4>Financial</h4>
+                        <template x-for="f in fieldsByGroup.financial" :key="f">
+                            <label class="field-checkbox"><input type="checkbox" :value="f" x-model="masterFields"><span x-text="fieldLabel(f)"></span></label>
+                        </template>
+                    </div>
+                    <div class="field-group">
+                        <h4>Assets &amp; Liabilities</h4>
+                        <template x-for="f in fieldsByGroup.assets" :key="f">
+                            <label class="field-checkbox"><input type="checkbox" :value="f" x-model="masterFields"><span x-text="fieldLabel(f)"></span></label>
+                        </template>
+                    </div>
+                    <div class="field-group">
+                        <h4>Personal Info</h4>
+                        <template x-for="f in fieldsByGroup.personal" :key="f">
+                            <label class="field-checkbox"><input type="checkbox" :value="f" x-model="masterFields"><span x-text="fieldLabel(f)"></span></label>
+                        </template>
+                    </div>
+                    <div class="field-group">
+                        <h4>Metadata</h4>
+                        <template x-for="f in fieldsByGroup.metadata" :key="f">
+                            <label class="field-checkbox"><input type="checkbox" :value="f" x-model="masterFields"><span x-text="fieldLabel(f)"></span></label>
+                        </template>
+                    </div>
+                </div>
+            </div>
+            <a class="btn-primary" :href="exportHref()" :download="'bloomberg_billionaires.' + exportFormat">Download</a>
+            <p class="muted" x-text="masterFields.length + ' fields selected'"></p>
         </div>
         <div class="export-card">
             <h3>Download Database</h3>
             <p>Download the raw SQLite file for local analysis.</p>
-            <a class="btn-primary" href="/api/export/bloomberg.db">Download bloomberg.db</a>
+            <a class="btn-primary" href="/api/export/bloomberg.db" download="bloomberg.db">Download bloomberg.db</a>
         </div>
     </main>
 
-    <script src="/app.js?v=4"></script>
+    <script src="/app.js?v=9"></script>
 </body>
 </html>

@@ -1,4 +1,3 @@
-# app/routes/analytics.py
 from fastapi import APIRouter, Query
 
 from app.database import get_db, get_snapshot_dates
@@ -10,10 +9,11 @@ router = APIRouter()
 def by_industry():
     conn = get_db()
     cursor = conn.execute("""
-        SELECT industry, SUM(net_worth_usd) as total_wealth, COUNT(*) as count
-        FROM billionaires
-        WHERE scraped_at = (SELECT MAX(scraped_at) FROM billionaires)
-        GROUP BY industry ORDER BY total_wealth DESC
+        SELECT p.industry, SUM(s.net_worth_usd) as total_wealth, COUNT(*) as count
+        FROM snapshots s
+        JOIN persons p ON s.person_id = p.person_id
+        WHERE s.scraped_at = (SELECT MAX(scraped_at) FROM snapshots)
+        GROUP BY p.industry ORDER BY total_wealth DESC
     """)
     rows = [dict(row) for row in cursor.fetchall()]
     conn.close()
@@ -24,10 +24,11 @@ def by_industry():
 def by_country():
     conn = get_db()
     cursor = conn.execute("""
-        SELECT citizenship as country, SUM(net_worth_usd) as total_wealth, COUNT(*) as count
-        FROM billionaires
-        WHERE scraped_at = (SELECT MAX(scraped_at) FROM billionaires)
-        GROUP BY citizenship ORDER BY total_wealth DESC
+        SELECT p.citizenship as country, SUM(s.net_worth_usd) as total_wealth, COUNT(*) as count
+        FROM snapshots s
+        JOIN persons p ON s.person_id = p.person_id
+        WHERE s.scraped_at = (SELECT MAX(scraped_at) FROM snapshots)
+        GROUP BY p.citizenship ORDER BY total_wealth DESC
         LIMIT 20
     """)
     rows = [dict(row) for row in cursor.fetchall()]
@@ -39,27 +40,29 @@ def by_country():
 def demographics():
     conn = get_db()
     gender_cursor = conn.execute("""
-        SELECT gender, COUNT(*) as count
-        FROM billionaires
-        WHERE scraped_at = (SELECT MAX(scraped_at) FROM billionaires)
-        GROUP BY gender
+        SELECT p.gender, COUNT(*) as count
+        FROM snapshots s
+        JOIN persons p ON s.person_id = p.person_id
+        WHERE s.scraped_at = (SELECT MAX(scraped_at) FROM snapshots)
+        GROUP BY p.gender
     """)
     gender = [dict(row) for row in gender_cursor.fetchall()]
 
     age_cursor = conn.execute("""
         SELECT
             CASE
-                WHEN age < 40 THEN '30-39'
-                WHEN age < 50 THEN '40-49'
-                WHEN age < 60 THEN '50-59'
-                WHEN age < 70 THEN '60-69'
-                WHEN age < 80 THEN '70-79'
-                WHEN age < 90 THEN '80-89'
+                WHEN p.age < 40 THEN '30-39'
+                WHEN p.age < 50 THEN '40-49'
+                WHEN p.age < 60 THEN '50-59'
+                WHEN p.age < 70 THEN '60-69'
+                WHEN p.age < 80 THEN '70-79'
+                WHEN p.age < 90 THEN '80-89'
                 ELSE '90+'
             END as bracket,
             COUNT(*) as count
-        FROM billionaires
-        WHERE scraped_at = (SELECT MAX(scraped_at) FROM billionaires)
+        FROM snapshots s
+        JOIN persons p ON s.person_id = p.person_id
+        WHERE s.scraped_at = (SELECT MAX(scraped_at) FROM snapshots)
         GROUP BY bracket ORDER BY bracket
     """)
     age_distribution = [dict(row) for row in age_cursor.fetchall()]
@@ -76,14 +79,18 @@ def snapshots():
 def compare_snapshots(from_date: str = Query(...), to_date: str = Query(...)):
     conn = get_db()
     from_cursor = conn.execute("""
-        SELECT person_id, common_name, rank, net_worth_usd
-        FROM billionaires WHERE DATE(scraped_at) = ?
+        SELECT s.person_id, p.common_name, s.rank, s.net_worth_usd
+        FROM snapshots s
+        JOIN persons p ON s.person_id = p.person_id
+        WHERE DATE(s.scraped_at) = ?
     """, (from_date,))
     from_data = {row[0]: dict(row) for row in from_cursor.fetchall()}
 
     to_cursor = conn.execute("""
-        SELECT person_id, common_name, rank, net_worth_usd
-        FROM billionaires WHERE DATE(scraped_at) = ?
+        SELECT s.person_id, p.common_name, s.rank, s.net_worth_usd
+        FROM snapshots s
+        JOIN persons p ON s.person_id = p.person_id
+        WHERE DATE(s.scraped_at) = ?
     """, (to_date,))
     to_data = {row[0]: dict(row) for row in to_cursor.fetchall()}
     conn.close()
