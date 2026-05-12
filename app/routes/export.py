@@ -4,7 +4,7 @@ import io
 import json
 
 from fastapi import APIRouter, Query
-from fastapi.responses import StreamingResponse, FileResponse
+from fastapi.responses import Response, FileResponse
 
 from app.database import get_db, DB_PATH
 
@@ -47,25 +47,21 @@ def export_data(
     conn.close()
 
     if format == "json":
-        return StreamingResponse(
-            io.BytesIO(json.dumps(rows, indent=2).encode()),
+        content = json.dumps(rows, indent=2).encode()
+        return Response(
+            content=content,
             media_type="application/json",
             headers={"Content-Disposition": "attachment; filename=bloomberg_billionaires.json"},
         )
 
-    if not rows:
-        return StreamingResponse(
-            io.BytesIO(b""),
-            media_type="text/csv",
-            headers={"Content-Disposition": "attachment; filename=bloomberg_billionaires.csv"},
-        )
-
     output = io.StringIO()
-    writer = csv.DictWriter(output, fieldnames=rows[0].keys())
-    writer.writeheader()
-    writer.writerows(rows)
-    return StreamingResponse(
-        io.BytesIO(output.getvalue().encode()),
+    if rows:
+        writer = csv.DictWriter(output, fieldnames=rows[0].keys())
+        writer.writeheader()
+        writer.writerows(rows)
+    content = output.getvalue().encode()
+    return Response(
+        content=content,
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=bloomberg_billionaires.csv"},
     )
@@ -90,19 +86,14 @@ def export_master():
     rows = [dict(row) for row in cursor.fetchall()]
     conn.close()
 
-    if not rows:
-        return StreamingResponse(
-            io.BytesIO(b""),
-            media_type="text/csv",
-            headers={"Content-Disposition": "attachment; filename=bloomberg_billionaires_master.csv"},
-        )
-
     output = io.StringIO()
-    writer = csv.DictWriter(output, fieldnames=rows[0].keys())
-    writer.writeheader()
-    writer.writerows(rows)
-    return StreamingResponse(
-        io.BytesIO(output.getvalue().encode()),
+    if rows:
+        writer = csv.DictWriter(output, fieldnames=rows[0].keys())
+        writer.writeheader()
+        writer.writerows(rows)
+    content = output.getvalue().encode()
+    return Response(
+        content=content,
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=bloomberg_billionaires_master.csv"},
     )
