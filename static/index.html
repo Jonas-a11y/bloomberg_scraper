@@ -90,11 +90,6 @@
                 </tbody>
             </table>
         </div>
-        <div class="pagination">
-            <span x-text="`Page ${tableData.page} of ${tableData.pages}`"></span>
-            <button @click="tableFilters.page--; loadTable()" :disabled="tableData.page <= 1">Prev</button>
-            <button @click="tableFilters.page++; loadTable()" :disabled="tableData.page >= tableData.pages">Next</button>
-        </div>
     </main>
 
     <!-- Analytics Tab -->

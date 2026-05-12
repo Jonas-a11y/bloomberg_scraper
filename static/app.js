@@ -3,8 +3,8 @@ function app() {
     return {
         tab: 'dashboard',
         dashboard: { total_wealth: 0, count: 0, snapshots: 0, latest_scrape: null },
-        tableData: { data: [], total: 0, page: 1, pages: 1 },
-        tableFilters: { q: '', country: '', industry: '', gender: '', page: 1, sort: 'rank' },
+        tableData: { data: [], total: 0 },
+        tableFilters: { q: '', country: '', industry: '', gender: '', sort: 'rank' },
         countries: [],
         industries: [],
         scraperStatus: { status: 'idle', next_run: null, last_success: null },
@@ -47,7 +47,6 @@ function app() {
             if (p.industry) params.set('industry', p.industry);
             if (p.gender) params.set('gender', p.gender);
             params.set('sort', p.sort);
-            params.set('page', p.page);
             this.tableData = await fetch(`/api/billionaires?${params}`).then(r => r.json());
         },
 
@@ -57,7 +56,6 @@ function app() {
             } else {
                 this.tableFilters.sort = col;
             }
-            this.tableFilters.page = 1;
             this.loadTable();
         },
 

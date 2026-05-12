@@ -1,5 +1,3 @@
-import math
-
 from fastapi import APIRouter, Query
 
 import app.database
@@ -15,7 +13,6 @@ def list_billionaires(
     gender: str | None = None,
     snapshot: str | None = None,
     sort: str = "rank",
-    page: int = 1,
     q: str | None = None,
 ):
     conn = get_db()
@@ -48,13 +45,6 @@ def list_billionaires(
         sort_col = "rank"
     sort_dir = "DESC" if sort.startswith("-") else "ASC"
 
-    count_sql = f"SELECT COUNT(*) FROM billionaires WHERE {where}"
-    total = conn.execute(count_sql, params).fetchone()[0]
-
-    per_page = 50
-    pages = max(1, math.ceil(total / per_page))
-    offset = (page - 1) * per_page
-
     data_sql = f"""
         SELECT person_id, rank, common_name, full_name, citizenship, age,
                birth_year, gender, gender_confidence, industry, sector,
@@ -62,13 +52,12 @@ def list_billionaires(
                ytd_change_usd, ytd_change_pct
         FROM billionaires WHERE {where}
         ORDER BY {sort_col} {sort_dir}
-        LIMIT ? OFFSET ?
     """
-    cursor = conn.execute(data_sql, params + [per_page, offset])
+    cursor = conn.execute(data_sql, params)
     rows = [dict(row) for row in cursor.fetchall()]
     conn.close()
 
-    return {"data": rows, "total": total, "page": page, "pages": pages}
+    return {"data": rows, "total": len(rows)}
 
 
 @router.get("/billionaires/{person_id}/history")
