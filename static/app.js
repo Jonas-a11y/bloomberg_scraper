@@ -212,7 +212,20 @@ function app() {
                 params.set('from_date', this.exportFrom);
                 params.set('to_date', this.exportTo);
             }
-            window.location.href = `/api/export?${params}`;
+            const filename = `bloomberg_billionaires.${this.exportFormat === 'json' ? 'json' : 'csv'}`;
+            this.downloadFile(`/api/export?${params}`, filename);
+        },
+
+        async downloadFile(url, filename) {
+            const resp = await fetch(url);
+            const blob = await resp.blob();
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(a.href);
         },
 
         exportUrl() {
