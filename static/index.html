@@ -242,18 +242,24 @@
                     <label><input type="radio" value="json" x-model="exportFormat"> JSON</label>
                 </div>
             </div>
-            <a class="btn-primary" :href="exportHref()">Download</a>
+            <form :action="exportHref()" method="GET">
+                <button type="submit" class="btn-primary">Download</button>
+            </form>
             <p class="muted">API: <code x-text="exportUrl()"></code></p>
         </div>
         <div class="export-card">
             <h3>Master CSV</h3>
             <p>All historical data in one file, sorted by date and rank. Ready for data science.</p>
-            <a class="btn-primary" href="/api/export/bloomberg_billionaires_master.csv">Download bloomberg_billionaires_master.csv</a>
+            <form action="/api/export/bloomberg_billionaires_master.csv" method="GET">
+                <button type="submit" class="btn-primary">Download bloomberg_billionaires_master.csv</button>
+            </form>
         </div>
         <div class="export-card">
             <h3>Download Database</h3>
             <p>Download the raw SQLite file for local analysis.</p>
-            <a class="btn-primary" href="/api/export/bloomberg.db">Download bloomberg.db</a>
+            <form action="/api/export/bloomberg.db" method="GET">
+                <button type="submit" class="btn-primary">Download bloomberg.db</button>
+            </form>
         </div>
     </main>
 
