@@ -97,6 +97,15 @@ function app() {
             this.loadScraper();
         },
 
+        nextRunForTime(timeStr) {
+            const [h, m] = timeStr.split(':').map(Number);
+            const now = new Date();
+            const next = new Date();
+            next.setHours(h, m, 0, 0);
+            if (next <= now) next.setDate(next.getDate() + 1);
+            return next.toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+        },
+
         async searchPeople() {
             if (this.personQuery.length < 2) { this.searchResults = []; return; }
             this.searchResults = await fetch(`/api/search?q=${encodeURIComponent(this.personQuery)}`).then(r => r.json());

@@ -152,28 +152,45 @@
                 <strong>Scraper Status</strong>
                 <div>
                     <span class="status-dot" :class="scraperStatus.status"></span>
-                    <span x-text="scraperStatus.status === 'running' ? 'Running...' : 'Idle — next run ' + (scraperStatus.next_run ? formatDate(scraperStatus.next_run) : 'not scheduled')"></span>
+                    <span x-text="scraperStatus.status === 'running' ? 'Running...' : 'Idle'"></span>
                 </div>
             </div>
             <button class="btn-primary" @click="triggerScrape()" :disabled="scraperStatus.status === 'running'">Run Now</button>
         </div>
+
         <div class="schedule-card">
-            <h3>Schedule</h3>
-            <div class="form-row">
-                <label>Run at:</label>
-                <div class="time-inputs">
-                    <template x-for="(t, idx) in schedule.times" :key="idx">
-                        <div class="time-input-group">
-                            <input type="time" :value="t" @change="schedule.times[idx] = $event.target.value">
-                            <button class="btn-small" @click="schedule.times.splice(idx, 1)">x</button>
-                        </div>
-                    </template>
-                    <button class="btn-small" @click="schedule.times.push('12:00')">+ Add time</button>
-                </div>
+            <div class="schedule-header">
+                <h3>Schedule</h3>
+                <label class="toggle">
+                    <input type="checkbox" x-model="schedule.enabled" @change="saveSchedule()">
+                    <span class="toggle-label" x-text="schedule.enabled ? 'Active' : 'Paused'"></span>
+                </label>
             </div>
-            <div class="form-row">
+
+            <div class="schedule-times" x-show="schedule.enabled">
+                <template x-for="(t, idx) in schedule.times" :key="idx">
+                    <div class="schedule-time-card">
+                        <div class="schedule-time-main">
+                            <span class="schedule-time-value" x-text="t"></span>
+                            <span class="schedule-time-tz" x-text="schedule.timezone"></span>
+                        </div>
+                        <div class="schedule-time-next muted" x-text="'Next: ' + nextRunForTime(t)"></div>
+                        <div class="schedule-time-actions">
+                            <input type="time" :value="t" @change="schedule.times[idx] = $event.target.value; saveSchedule()" class="time-edit">
+                            <button class="btn-remove" @click="schedule.times.splice(idx, 1); saveSchedule()">Remove</button>
+                        </div>
+                    </div>
+                </template>
+                <button class="btn-add-time" @click="schedule.times.push('12:00'); saveSchedule()">+ Add scheduled time</button>
+            </div>
+
+            <div class="schedule-paused" x-show="!schedule.enabled">
+                <p class="muted">Schedule is paused. Enable to resume automatic scraping.</p>
+            </div>
+
+            <div class="form-row" style="margin-top: 16px;">
                 <label>Timezone:</label>
-                <select x-model="schedule.timezone">
+                <select x-model="schedule.timezone" @change="saveSchedule()">
                     <option>UTC</option>
                     <option>Europe/Berlin</option>
                     <option>US/Eastern</option>
@@ -181,8 +198,8 @@
                     <option>Asia/Tokyo</option>
                 </select>
             </div>
-            <button class="btn-primary" @click="saveSchedule()">Save</button>
         </div>
+
         <div class="runs-card">
             <h3>Recent Runs</h3>
             <table>
@@ -191,7 +208,7 @@
                     <template x-for="run in scraperRuns" :key="run.id">
                         <tr>
                             <td x-text="formatDate(run.started_at)"></td>
-                            <td :class="run.status === 'success' ? 'positive' : 'negative'" x-text="run.status"></td>
+                            <td :class="run.status === 'success' ? 'positive' : run.status === 'running' ? '' : 'negative'" x-text="run.status"></td>
                             <td x-text="run.record_count || '—'"></td>
                             <td x-text="run.duration_ms ? (run.duration_ms / 1000).toFixed(1) + 's' : '—'"></td>
                         </tr>

@@ -98,6 +98,35 @@ tbody tr:hover { background: #f8f9ff; }
 .time-inputs { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .time-input-group { display: flex; align-items: center; gap: 4px; }
 
+.schedule-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+.schedule-header h3 { margin-bottom: 0; }
+
+.toggle { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px; }
+.toggle input { width: 16px; height: 16px; accent-color: #4ecdc4; }
+.toggle-label { color: #666; }
+
+.schedule-times { display: flex; flex-direction: column; gap: 10px; }
+
+.schedule-time-card {
+    display: flex; align-items: center; gap: 16px; padding: 12px 16px;
+    background: #f8f9fa; border: 1px solid #e8e8e8; border-radius: 8px;
+}
+.schedule-time-main { display: flex; align-items: baseline; gap: 6px; min-width: 120px; }
+.schedule-time-value { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.schedule-time-tz { font-size: 12px; color: #888; }
+.schedule-time-next { flex: 1; }
+.schedule-time-actions { display: flex; gap: 8px; align-items: center; }
+.time-edit { padding: 4px 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 13px; }
+.btn-remove { background: none; border: 1px solid #ddd; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 12px; color: #888; }
+.btn-remove:hover { border-color: #ff6b6b; color: #ff6b6b; }
+.btn-add-time {
+    background: none; border: 2px dashed #ddd; padding: 12px; border-radius: 8px;
+    cursor: pointer; font-size: 13px; color: #888; width: 100%;
+}
+.btn-add-time:hover { border-color: #4ecdc4; color: #4ecdc4; }
+
+.schedule-paused { padding: 20px; text-align: center; }
+
 .btn-primary {
     background: #1a1a2e; color: white; border: none; padding: 10px 20px;
     border-radius: 6px; font-weight: bold; cursor: pointer; font-size: 14px; text-decoration: none; display: inline-block;
