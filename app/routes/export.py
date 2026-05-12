@@ -2,9 +2,11 @@
 import csv
 import io
 import json
+import tempfile
+from pathlib import Path
 
-from fastapi import APIRouter, Query
-from fastapi.responses import Response, FileResponse
+from fastapi import APIRouter
+from fastapi.responses import FileResponse
 
 from app.database import get_db, DB_PATH
 
@@ -47,37 +49,32 @@ def export_data(
     conn.close()
 
     if format == "json":
-        content = json.dumps(rows, indent=2).encode("utf-8")
-        return Response(
-            content=content,
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".json")
+        tmp.write(json.dumps(rows, indent=2).encode("utf-8"))
+        tmp.close()
+        return FileResponse(
+            tmp.name,
             media_type="application/json",
-            headers={
-                "Content-Disposition": 'attachment; filename="bloomberg_billionaires.json"',
-                "Content-Length": str(len(content)),
-            },
+            filename="bloomberg_billionaires.json",
         )
 
-    output = io.StringIO()
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".csv", mode="w", newline="")
     if rows:
-        writer = csv.DictWriter(output, fieldnames=rows[0].keys())
+        writer = csv.DictWriter(tmp, fieldnames=rows[0].keys())
         writer.writeheader()
         writer.writerows(rows)
-    content = output.getvalue().encode("utf-8")
-    return Response(
-        content=content,
+    tmp.close()
+    return FileResponse(
+        tmp.name,
         media_type="text/csv",
-        headers={
-            "Content-Disposition": 'attachment; filename="bloomberg_billionaires.csv"',
-            "Content-Length": str(len(content)),
-        },
+        filename="bloomberg_billionaires.csv",
     )
 
 
 @router.get("/export/bloomberg.db")
 def export_db():
-    db_path = str(DB_PATH)
     return FileResponse(
-        db_path,
+        str(DB_PATH),
         media_type="application/octet-stream",
         filename="bloomberg.db",
     )
@@ -92,17 +89,14 @@ def export_master():
     rows = [dict(row) for row in cursor.fetchall()]
     conn.close()
 
-    output = io.StringIO()
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".csv", mode="w", newline="")
     if rows:
-        writer = csv.DictWriter(output, fieldnames=rows[0].keys())
+        writer = csv.DictWriter(tmp, fieldnames=rows[0].keys())
         writer.writeheader()
         writer.writerows(rows)
-    content = output.getvalue().encode("utf-8")
-    return Response(
-        content=content,
+    tmp.close()
+    return FileResponse(
+        tmp.name,
         media_type="text/csv",
-        headers={
-            "Content-Disposition": 'attachment; filename="bloomberg_billionaires_master.csv"',
-            "Content-Length": str(len(content)),
-        },
+        filename="bloomberg_billionaires_master.csv",
     )
