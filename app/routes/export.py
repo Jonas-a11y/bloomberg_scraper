@@ -50,8 +50,8 @@ def export_data(
         content = json.dumps(rows, indent=2).encode()
         return Response(
             content=content,
-            media_type="application/json",
-            headers={"Content-Disposition": "attachment; filename=bloomberg_billionaires.json"},
+            media_type="application/octet-stream",
+            headers={"Content-Disposition": "attachment; filename=\"bloomberg_billionaires.json\""},
         )
 
     output = io.StringIO()
@@ -62,8 +62,8 @@ def export_data(
     content = output.getvalue().encode()
     return Response(
         content=content,
-        media_type="text/csv",
-        headers={"Content-Disposition": "attachment; filename=bloomberg_billionaires.csv"},
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": "attachment; filename=\"bloomberg_billionaires.csv\""},
     )
 
 
@@ -72,7 +72,7 @@ def export_db():
     db_path = str(DB_PATH)
     return FileResponse(
         db_path,
-        media_type="application/x-sqlite3",
+        media_type="application/octet-stream",
         filename="bloomberg.db",
     )
 
@@ -94,6 +94,6 @@ def export_master():
     content = output.getvalue().encode()
     return Response(
         content=content,
-        media_type="text/csv",
-        headers={"Content-Disposition": "attachment; filename=bloomberg_billionaires_master.csv"},
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": "attachment; filename=\"bloomberg_billionaires_master.csv\""},
     )

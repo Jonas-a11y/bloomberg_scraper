@@ -204,7 +204,7 @@ function app() {
             });
         },
 
-        downloadExport() {
+        exportHref() {
             const params = new URLSearchParams();
             params.set('format', this.exportFormat);
             params.set('scope', this.exportScope);
@@ -212,18 +212,15 @@ function app() {
                 params.set('from_date', this.exportFrom);
                 params.set('to_date', this.exportTo);
             }
-            window.location.href = `/api/export?${params}`;
+            return `/api/export?${params}`;
         },
 
-        downloadFile(url) {
-            window.location.href = url;
+        exportFilename() {
+            return `bloomberg_billionaires.${this.exportFormat === 'json' ? 'json' : 'csv'}`;
         },
 
         exportUrl() {
-            const params = new URLSearchParams();
-            params.set('format', this.exportFormat);
-            params.set('scope', this.exportScope);
-            return `GET /api/export?${params}`;
+            return `GET ${this.exportHref()}`;
         },
 
         formatWealth(v) {
