@@ -215,10 +215,6 @@ function app() {
             return `/api/export?${params}`;
         },
 
-        exportFilename() {
-            return `bloomberg_billionaires.${this.exportFormat === 'json' ? 'json' : 'csv'}`;
-        },
-
         exportUrl() {
             return `GET ${this.exportHref()}`;
         },

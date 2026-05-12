@@ -47,11 +47,14 @@ def export_data(
     conn.close()
 
     if format == "json":
-        content = json.dumps(rows, indent=2).encode()
+        content = json.dumps(rows, indent=2).encode("utf-8")
         return Response(
             content=content,
-            media_type="application/octet-stream",
-            headers={"Content-Disposition": "attachment; filename=\"bloomberg_billionaires.json\""},
+            media_type="application/json",
+            headers={
+                "Content-Disposition": 'attachment; filename="bloomberg_billionaires.json"',
+                "Content-Length": str(len(content)),
+            },
         )
 
     output = io.StringIO()
@@ -59,11 +62,14 @@ def export_data(
         writer = csv.DictWriter(output, fieldnames=rows[0].keys())
         writer.writeheader()
         writer.writerows(rows)
-    content = output.getvalue().encode()
+    content = output.getvalue().encode("utf-8")
     return Response(
         content=content,
-        media_type="application/octet-stream",
-        headers={"Content-Disposition": "attachment; filename=\"bloomberg_billionaires.csv\""},
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": 'attachment; filename="bloomberg_billionaires.csv"',
+            "Content-Length": str(len(content)),
+        },
     )
 
 
@@ -91,9 +97,12 @@ def export_master():
         writer = csv.DictWriter(output, fieldnames=rows[0].keys())
         writer.writeheader()
         writer.writerows(rows)
-    content = output.getvalue().encode()
+    content = output.getvalue().encode("utf-8")
     return Response(
         content=content,
-        media_type="application/octet-stream",
-        headers={"Content-Disposition": "attachment; filename=\"bloomberg_billionaires_master.csv\""},
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": 'attachment; filename="bloomberg_billionaires_master.csv"',
+            "Content-Length": str(len(content)),
+        },
     )
