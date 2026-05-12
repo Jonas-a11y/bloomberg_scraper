@@ -248,12 +248,12 @@
         <div class="export-card">
             <h3>Master CSV</h3>
             <p>All historical data in one file, sorted by date and rank. Ready for data science.</p>
-            <button class="btn-primary" @click="downloadFile('/api/export/master', 'bloomberg_billionaires_master.csv')">Download bloomberg_billionaires_master.csv</button>
+            <button class="btn-primary" @click="downloadFile('/api/export/bloomberg_billionaires_master.csv')">Download bloomberg_billionaires_master.csv</button>
         </div>
         <div class="export-card">
             <h3>Download Database</h3>
             <p>Download the raw SQLite file for local analysis.</p>
-            <button class="btn-primary" @click="downloadFile('/api/export/db', 'bloomberg.db')">Download bloomberg.db</button>
+            <button class="btn-primary" @click="downloadFile('/api/export/bloomberg.db')">Download bloomberg.db</button>
         </div>
     </main>
 

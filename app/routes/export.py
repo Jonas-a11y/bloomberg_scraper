@@ -67,7 +67,7 @@ def export_data(
     )
 
 
-@router.get("/export/db")
+@router.get("/export/bloomberg.db")
 def export_db():
     db_path = str(DB_PATH)
     return FileResponse(
@@ -77,7 +77,7 @@ def export_db():
     )
 
 
-@router.get("/export/master")
+@router.get("/export/bloomberg_billionaires_master.csv")
 def export_master():
     conn = get_db()
     cursor = conn.execute("""
