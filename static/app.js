@@ -232,7 +232,7 @@ function app() {
                 params.set('from_date', this.exportFrom);
                 params.set('to_date', this.exportTo);
             }
-            if (this.masterFields.length > 0 && this.masterFields.length < this.allFields.length) {
+            if (this.masterFields.length > 0) {
                 params.set('fields', this.masterFields.join(','));
             }
             const ext = this.exportFormat === 'json' ? 'json' : 'csv';
