@@ -5,13 +5,16 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from app.database import init_db
+from app.scheduler import start_scheduler, stop_scheduler
 from app.routes import dashboard, billionaires, analytics, scraper_api, export
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    start_scheduler()
     yield
+    stop_scheduler()
 
 
 app = FastAPI(title="Bloomberg Scraper", lifespan=lifespan)
