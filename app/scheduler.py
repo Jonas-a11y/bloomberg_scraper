@@ -81,15 +81,18 @@ def apply_schedule():
     if not config["enabled"]:
         return
     for time_str in config["times"]:
-        hour, minute = time_str.split(":")
-        scheduler.add_job(
-            run_scrape,
-            "cron",
-            hour=int(hour),
-            minute=int(minute),
-            timezone=config["timezone"],
-            id=f"scrape_{time_str}",
-        )
+        try:
+            hour, minute = time_str.split(":")
+            scheduler.add_job(
+                run_scrape,
+                "cron",
+                hour=int(hour),
+                minute=int(minute),
+                timezone=config["timezone"],
+                id=f"scrape_{time_str}",
+            )
+        except Exception as e:
+            logger.warning(f"Failed to schedule {time_str}: {e}")
 
 
 def start_scheduler():

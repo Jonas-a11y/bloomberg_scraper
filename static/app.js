@@ -15,6 +15,7 @@ function app() {
         searchResults: [],
         chartColors: ['#4ecdc4', '#ff6b6b', '#6c5ce7', '#fdcb6e', '#a29bfe', '#00b894', '#e17055', '#0984e3', '#d63031', '#6ab04c'],
         wealthChart: null,
+        chartInstances: {},
         exportScope: 'latest',
         exportFormat: 'csv',
         exportFrom: '',
@@ -104,12 +105,14 @@ function app() {
         },
 
         async saveSchedule() {
-            await fetch('/api/scraper/schedule', {
+            const res = await fetch('/api/scraper/schedule', {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(this.schedule),
             });
-            this.loadScraper();
+            if (res.ok) {
+                this.schedule = await res.json();
+            }
         },
 
         nextRunForTime(timeStr) {
@@ -185,7 +188,8 @@ function app() {
 
         renderBarChart(canvasId, data, labelKey, valueKey) {
             const ctx = document.getElementById(canvasId);
-            new Chart(ctx, {
+            if (this.chartInstances[canvasId]) this.chartInstances[canvasId].destroy();
+            this.chartInstances[canvasId] = new Chart(ctx, {
                 type: 'bar',
                 data: {
                     labels: data.map(d => d[labelKey]),
@@ -197,7 +201,8 @@ function app() {
 
         renderDoughnut(canvasId, data) {
             const ctx = document.getElementById(canvasId);
-            new Chart(ctx, {
+            if (this.chartInstances[canvasId]) this.chartInstances[canvasId].destroy();
+            this.chartInstances[canvasId] = new Chart(ctx, {
                 type: 'doughnut',
                 data: {
                     labels: data.map(d => d.gender),
@@ -209,7 +214,8 @@ function app() {
 
         renderAgeChart(canvasId, data) {
             const ctx = document.getElementById(canvasId);
-            new Chart(ctx, {
+            if (this.chartInstances[canvasId]) this.chartInstances[canvasId].destroy();
+            this.chartInstances[canvasId] = new Chart(ctx, {
                 type: 'bar',
                 data: {
                     labels: data.map(d => d.bracket),
