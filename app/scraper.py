@@ -135,7 +135,7 @@ def scrape_billionaires():
     data = json.loads(match.group(1))
     if len(data) < 400:
         raise RuntimeError(f"Partial data: only {len(data)} records")
-    scraped_at = datetime.now().isoformat()
+    scraped_at = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
     rows = []
     for person in data:
         row = flatten_person(person)
