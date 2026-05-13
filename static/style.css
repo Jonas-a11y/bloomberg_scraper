@@ -150,8 +150,53 @@ h3 { font-size: 15px; margin-bottom: 12px; }
 .field-checkbox { display: flex; align-items: center; gap: 4px; margin-bottom: 4px; font-size: 13px; cursor: pointer; }
 .field-checkbox input { accent-color: #4ecdc4; }
 
+.clickable-row { cursor: pointer; }
+.clickable-row:hover { background: #f0f8ff !important; }
+
+.panel-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.3); z-index: 100;
+}
+
+.detail-panel {
+    position: fixed; top: 0; right: 0; bottom: 0; width: 480px; max-width: 90vw;
+    background: white; z-index: 101; box-shadow: -4px 0 24px rgba(0,0,0,0.15);
+    transform: translateX(100%); transition: transform 0.25s ease;
+    overflow-y: auto;
+}
+.detail-panel.open { transform: translateX(0); }
+
+.panel-content { padding: 24px; }
+
+.panel-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; }
+.panel-header h2 { font-size: 20px; margin-bottom: 4px; }
+.panel-close { background: none; border: none; font-size: 28px; cursor: pointer; color: #888; line-height: 1; padding: 0 4px; }
+.panel-close:hover { color: #333; }
+
+.panel-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 20px; }
+.panel-stat { background: #f8f9fa; padding: 12px; border-radius: 6px; text-align: center; }
+.panel-stat-label { display: block; font-size: 11px; color: #888; margin-bottom: 2px; }
+.panel-stat-value { display: block; font-size: 15px; font-weight: 600; }
+
+.panel-chart { margin-bottom: 20px; background: #fafafa; border-radius: 8px; padding: 12px; }
+
+.panel-section { margin-bottom: 20px; }
+.panel-section h4 { font-size: 12px; color: #888; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
+.panel-section p { font-size: 13px; line-height: 1.6; }
+.panel-section ul { list-style: disc; padding-left: 18px; font-size: 13px; }
+.panel-section li { margin-bottom: 4px; }
+.panel-bio { max-height: 200px; overflow-y: auto; }
+
+.milestones { display: flex; flex-direction: column; gap: 6px; }
+.milestone { font-size: 13px; display: flex; gap: 10px; }
+.milestone-year { font-weight: 600; color: #4ecdc4; min-width: 36px; }
+
+.asset-group { margin-bottom: 12px; }
+.asset-group h5 { font-size: 11px; color: #666; margin-bottom: 6px; }
+.asset-row { display: flex; justify-content: space-between; font-size: 13px; padding: 4px 0; border-bottom: 1px solid #f0f0f0; }
+
 @media (max-width: 768px) {
     .stats-grid { grid-template-columns: 1fr; }
     .aggregate-grid { grid-template-columns: 1fr; }
     .nav-tabs { overflow-x: auto; }
+    .detail-panel { width: 100%; }
 }

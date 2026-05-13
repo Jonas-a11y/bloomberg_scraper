@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Bloomberg Scraper</title>
-    <link rel="stylesheet" href="/style.css?v=10">
+    <link rel="stylesheet" href="/style.css?v=12">
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 </head>
@@ -76,7 +76,7 @@
                 </thead>
                 <tbody>
                     <template x-for="b in tableData.data" :key="b.person_id">
-                        <tr>
+                        <tr @click="openPanel(b.person_id)" class="clickable-row">
                             <td x-text="b.rank"></td>
                             <td x-text="b.common_name"></td>
                             <td x-text="formatWealth(b.net_worth_usd)"></td>
@@ -300,6 +300,108 @@
         </div>
     </main>
 
-    <script src="/app.js?v=11"></script>
+    <!-- Person Detail Side Panel -->
+    <div class="panel-overlay" x-show="panelOpen" @click="panelOpen = false" x-transition.opacity></div>
+    <aside class="detail-panel" :class="{ open: panelOpen }">
+        <template x-if="panelPerson">
+            <div class="panel-content">
+                <div class="panel-header">
+                    <div>
+                        <h2 x-text="panelPerson.common_name"></h2>
+                        <p class="muted" x-text="'#' + panelPerson.rank + ' · ' + (panelPerson.citizenship || '') + ' · Age ' + (panelPerson.age || '?')"></p>
+                    </div>
+                    <button class="panel-close" @click="panelOpen = false">&times;</button>
+                </div>
+
+                <div class="panel-stats">
+                    <div class="panel-stat">
+                        <span class="panel-stat-label">Net Worth</span>
+                        <span class="panel-stat-value" x-text="formatWealth(panelPerson.net_worth_usd)"></span>
+                    </div>
+                    <div class="panel-stat">
+                        <span class="panel-stat-label">Daily</span>
+                        <span class="panel-stat-value" :class="panelPerson.last_change_usd >= 0 ? 'positive' : 'negative'" x-text="formatChange(panelPerson.last_change_usd)"></span>
+                    </div>
+                    <div class="panel-stat">
+                        <span class="panel-stat-label">YTD</span>
+                        <span class="panel-stat-value" :class="panelPerson.ytd_change_usd >= 0 ? 'positive' : 'negative'" x-text="formatChange(panelPerson.ytd_change_usd)"></span>
+                    </div>
+                </div>
+
+                <div class="panel-chart">
+                    <canvas id="panelChart"></canvas>
+                </div>
+
+                <div class="panel-section" x-show="panelPerson.industry">
+                    <h4>Industry</h4>
+                    <p x-text="panelPerson.industry + (panelPerson.sector && panelPerson.sector !== panelPerson.industry ? ' / ' + panelPerson.sector : '')"></p>
+                </div>
+
+                <div class="panel-section" x-show="panelPerson.biography">
+                    <h4>Biography</h4>
+                    <p class="panel-bio" x-text="panelPerson.biography"></p>
+                </div>
+
+                <div class="panel-section" x-show="panelPerson.overview">
+                    <h4>Overview</h4>
+                    <p class="panel-bio" x-text="panelPerson.overview"></p>
+                </div>
+
+                <div class="panel-section" x-show="panelSchools.length > 0">
+                    <h4>Education</h4>
+                    <ul>
+                        <template x-for="s in panelSchools" :key="s"><li x-text="s"></li></template>
+                    </ul>
+                </div>
+
+                <div class="panel-section" x-show="panelMilestones.length > 0">
+                    <h4>Milestones</h4>
+                    <div class="milestones">
+                        <template x-for="m in panelMilestones" :key="m.year + m.event">
+                            <div class="milestone">
+                                <span class="milestone-year" x-text="m.year"></span>
+                                <span x-text="m.event"></span>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+
+                <div class="panel-section" x-show="panelAssets.public.length > 0 || panelAssets.private.length > 0">
+                    <h4>Assets</h4>
+                    <template x-if="panelAssets.public.length > 0">
+                        <div class="asset-group">
+                            <h5>Public Holdings</h5>
+                            <template x-for="a in panelAssets.public" :key="a.ticker">
+                                <div class="asset-row">
+                                    <span x-text="a.ticker"></span>
+                                    <span x-text="formatWealth(a.value)"></span>
+                                </div>
+                            </template>
+                        </div>
+                    </template>
+                    <template x-if="panelAssets.private.length > 0">
+                        <div class="asset-group">
+                            <h5>Private Holdings</h5>
+                            <template x-for="a in panelAssets.private" :key="a.name">
+                                <div class="asset-row">
+                                    <span x-text="a.name"></span>
+                                    <span x-text="formatWealth(a.value)"></span>
+                                </div>
+                            </template>
+                        </div>
+                    </template>
+                </div>
+
+                <div class="panel-section" x-show="panelFacts.length > 0">
+                    <h4>Facts</h4>
+                    <ul>
+                        <template x-for="f in panelFacts" :key="f"><li x-text="f"></li></template>
+                    </ul>
+                </div>
+            </div>
+        </template>
+    </aside>
+
+    <script src="/app.js?v=12"></script>
 </body>
 </html>

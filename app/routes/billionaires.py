@@ -75,6 +75,27 @@ def person_history(person_id: int):
     return rows
 
 
+@router.get("/billionaires/{person_id}")
+def person_detail(person_id: int):
+    conn = get_db()
+    cursor = conn.execute("""
+        SELECT p.*, s.rank, s.net_worth_usd, s.last_change_usd, s.last_change_pct,
+               s.ytd_change_usd, s.ytd_change_pct,
+               s.public_assets_total, s.private_assets_total, s.cash_assets_total,
+               s.public_assets_json, s.private_assets_json,
+               s.cash_asset_value, s.liabilities_value, s.liabilities_note
+        FROM persons p
+        JOIN snapshots s ON p.person_id = s.person_id
+        WHERE p.person_id = ?
+          AND s.scraped_at = (SELECT MAX(scraped_at) FROM snapshots WHERE person_id = ?)
+    """, (person_id, person_id))
+    row = cursor.fetchone()
+    conn.close()
+    if not row:
+        return {"error": "not found"}
+    return dict(row)
+
+
 @router.get("/search")
 def search(q: str = Query(..., min_length=1)):
     conn = get_db()
