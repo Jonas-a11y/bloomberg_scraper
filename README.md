@@ -1,6 +1,6 @@
 # Bloomberg Billionaires Scraper
 
-A self-hosted web app that scrapes the [Bloomberg Billionaires Index](https://www.bloomberg.com/billionaires/) and tracks wealth data over time.
+A self-hosted web app that scrapes the [Bloomberg Billionaires Index](https://www.bloomberg.com/billionaires/) and tracks wealth data over time. Have a look at [This Website](http://router.jonas-giessler.de:45241)
 
 ## Features
 
