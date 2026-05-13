@@ -17,7 +17,6 @@ CREATE TABLE IF NOT EXISTS persons (
     gender               TEXT,
     gender_confidence    REAL,
     industry             TEXT,
-    sector               TEXT,
     biography            TEXT,
     overview             TEXT,
     net_worth_summary    TEXT,
@@ -76,7 +75,7 @@ INSERT OR IGNORE INTO schedule_config (id) VALUES (1);
 PERSON_COLUMNS = [
     "person_id", "common_name", "full_name", "first_name", "last_name",
     "middle_name", "citizenship", "age", "birth_year", "gender",
-    "gender_confidence", "industry", "sector", "biography", "overview",
+    "gender_confidence", "industry", "biography", "overview",
     "net_worth_summary", "schools_json", "facts_json", "milestones_json",
     "slug", "confidence", "updated_at",
 ]
@@ -127,14 +126,14 @@ def _migrate_legacy_table(conn):
         INSERT OR REPLACE INTO persons (
             person_id, common_name, full_name, first_name, last_name,
             middle_name, citizenship, age, birth_year, gender,
-            gender_confidence, industry, sector, biography, overview,
+            gender_confidence, industry, biography, overview,
             net_worth_summary, schools_json, facts_json, milestones_json,
             slug, confidence, updated_at
         )
         SELECT
             person_id, common_name, full_name, first_name, last_name,
             middle_name, citizenship, age, birth_year, gender,
-            gender_confidence, industry, sector, biography, overview,
+            gender_confidence, industry, biography, overview,
             net_worth_summary, schools_json, facts_json, milestones_json,
             slug, confidence, scraped_at
         FROM billionaires
@@ -191,7 +190,7 @@ def get_latest_snapshot(db_path=None):
     conn = get_db(db_path)
     cursor = conn.execute("""
         SELECT s.*, p.common_name, p.full_name, p.citizenship, p.age,
-               p.birth_year, p.gender, p.gender_confidence, p.industry, p.sector
+               p.birth_year, p.gender, p.gender_confidence, p.industry
         FROM snapshots s
         JOIN persons p ON s.person_id = p.person_id
         WHERE s.scraped_at = (SELECT MAX(scraped_at) FROM snapshots)

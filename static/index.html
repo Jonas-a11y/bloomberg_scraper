@@ -328,13 +328,15 @@
                     </div>
                 </div>
 
+                <p class="panel-summary" x-show="panelPerson.net_worth_summary" x-text="panelPerson.net_worth_summary"></p>
+
                 <div class="panel-chart">
                     <canvas id="panelChart"></canvas>
                 </div>
 
                 <div class="panel-section" x-show="panelPerson.industry">
                     <h4>Industry</h4>
-                    <p x-text="panelPerson.industry + (panelPerson.sector && panelPerson.sector !== panelPerson.industry ? ' / ' + panelPerson.sector : '')"></p>
+                    <p x-text="panelPerson.industry"></p>
                 </div>
 
                 <div class="panel-section" x-show="panelPerson.biography">

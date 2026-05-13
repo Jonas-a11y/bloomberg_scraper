@@ -76,7 +76,6 @@ def flatten_person(person):
     row["gender"] = gender
     row["gender_confidence"] = gender_confidence
     row["industry"] = person.get("industry")
-    row["sector"] = person.get("sector")
     row["net_worth_usd"] = person.get("worth")
     row["last_change_usd"] = person.get("lastChange")
     row["last_change_pct"] = person.get("lastPercentChange")

@@ -30,7 +30,7 @@ def test_flatten_person():
     person = {
         "personId": 1, "rank": 1, "fullName": "Test Person", "commonName": "Test",
         "firstName": "TEST", "lastName": "PERSON", "middleName": None,
-        "citizenship": "US", "age": 50, "industry": "Tech", "sector": "Tech",
+        "citizenship": "US", "age": 50, "industry": "Tech",
         "worth": 100, "lastChange": 10, "lastPercentChange": 1.0,
         "ytdChange": 50, "ytdPercentChange": 5.0,
         "fWorth": "$100", "fLastChange": "+$10", "fYtdChange": "+$50",

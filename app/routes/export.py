@@ -146,7 +146,6 @@ AVAILABLE_FIELDS = {
     "gender": "p.gender",
     "gender_confidence": "p.gender_confidence",
     "industry": "p.industry",
-    "sector": "p.sector",
     "biography": "p.biography",
     "overview": "p.overview",
     "net_worth_summary": "p.net_worth_summary",
@@ -172,7 +171,7 @@ AVAILABLE_FIELDS = {
 
 DEFAULT_FIELDS = [
     "scraped_at", "rank", "person_id", "common_name", "full_name",
-    "citizenship", "age", "gender", "industry", "sector",
+    "citizenship", "age", "gender", "industry",
     "net_worth_usd", "last_change_usd", "last_change_pct",
     "ytd_change_usd", "ytd_change_pct",
     "public_assets_total", "private_assets_total", "cash_assets_total",

@@ -19,7 +19,6 @@ class BillionaireRow(BaseModel):
     gender: str | None
     gender_confidence: float | None
     industry: str | None
-    sector: str | None
     net_worth_usd: int | None
     last_change_usd: int | None
     last_change_pct: float | None

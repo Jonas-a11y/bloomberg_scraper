@@ -37,7 +37,6 @@ def seeded_client(client, tmp_path):
             "gender": "male" if i % 3 != 0 else "female",
             "gender_confidence": 0.9,
             "industry": "Technology" if i <= 3 else "Finance",
-            "sector": "Technology" if i <= 3 else "Finance",
             "net_worth_usd": (10 - i) * 100000000000,
             "last_change_usd": 1000000000,
             "last_change_pct": 1.0,

@@ -39,7 +39,6 @@ def test_insert_and_query():
                 "gender": "male",
                 "gender_confidence": 0.95,
                 "industry": "Technology",
-                "sector": "Technology",
                 "net_worth_usd": 100000000000,
                 "last_change_usd": 1000000000,
                 "last_change_pct": 1.0,

@@ -172,10 +172,12 @@ h3 { font-size: 15px; margin-bottom: 12px; }
 .panel-close { background: none; border: none; font-size: 28px; cursor: pointer; color: #888; line-height: 1; padding: 0 4px; }
 .panel-close:hover { color: #333; }
 
-.panel-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 20px; }
+.panel-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 16px; }
 .panel-stat { background: #f8f9fa; padding: 12px; border-radius: 6px; text-align: center; }
 .panel-stat-label { display: block; font-size: 11px; color: #888; margin-bottom: 2px; }
 .panel-stat-value { display: block; font-size: 15px; font-weight: 600; }
+
+.panel-summary { font-size: 13px; color: #555; line-height: 1.5; margin-bottom: 20px; }
 
 .panel-chart { margin-bottom: 20px; background: #fafafa; border-radius: 8px; padding: 12px; }
 

@@ -47,7 +47,7 @@ def list_billionaires(
 
     data_sql = f"""
         SELECT p.person_id, s.rank, p.common_name, p.full_name, p.citizenship, p.age,
-               p.birth_year, p.gender, p.gender_confidence, p.industry, p.sector,
+               p.birth_year, p.gender, p.gender_confidence, p.industry,
                s.net_worth_usd, s.last_change_usd, s.last_change_pct,
                s.ytd_change_usd, s.ytd_change_pct
         FROM snapshots s

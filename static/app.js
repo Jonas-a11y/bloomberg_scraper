@@ -35,7 +35,7 @@ function app() {
             demographics: ['citizenship', 'age', 'birth_year', 'gender', 'gender_confidence'],
             financial: ['scraped_at', 'rank', 'net_worth_usd', 'last_change_usd', 'last_change_pct', 'ytd_change_usd', 'ytd_change_pct'],
             assets: ['public_assets_total', 'private_assets_total', 'cash_assets_total', 'public_assets_json', 'private_assets_json', 'cash_asset_value', 'liabilities_value', 'liabilities_note'],
-            personal: ['industry', 'sector', 'biography', 'overview', 'net_worth_summary', 'schools_json', 'facts_json', 'milestones_json'],
+            personal: ['industry', 'biography', 'overview', 'net_worth_summary', 'schools_json', 'facts_json', 'milestones_json'],
             metadata: ['confidence'],
         },
 
