@@ -38,6 +38,25 @@ nav {
 main { max-width: 1200px; margin: 24px auto; padding: 0 24px; }
 
 .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 24px; }
+
+.nerds {
+    background: white; border: 1px solid #e0e0e0; border-radius: 8px;
+    padding: 16px 20px; margin-bottom: 24px;
+}
+.nerds summary {
+    cursor: pointer; font-weight: 600; font-size: 14px; color: #1a1a2e;
+    list-style: none; padding: 4px 0;
+}
+.nerds summary::-webkit-details-marker { display: none; }
+.nerds summary::before { content: "▸ "; color: #888; transition: transform 0.15s; display: inline-block; }
+.nerds[open] summary::before { content: "▾ "; }
+.nerds-content { padding-top: 12px; font-size: 13px; line-height: 1.6; color: #333; }
+.nerds-content h4 { font-size: 13px; color: #1a1a2e; margin: 16px 0 6px; text-transform: uppercase; letter-spacing: 0.5px; }
+.nerds-content h4:first-child { margin-top: 0; }
+.nerds-content p { margin-bottom: 10px; }
+.nerds-content ul { padding-left: 20px; margin-bottom: 10px; }
+.nerds-content li { margin-bottom: 4px; }
+.nerds-content code { background: #f0f0f0; padding: 1px 5px; border-radius: 3px; font-size: 12px; }
 .stat-card { background: white; padding: 20px; border-radius: 8px; border: 1px solid #e0e0e0; }
 .stat-label { font-size: 12px; color: #888; margin-bottom: 4px; }
 .stat-value { font-size: 24px; font-weight: bold; }

@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Bloomberg Scraper</title>
-    <link rel="stylesheet" href="/style.css?v=15">
+    <link rel="stylesheet" href="/style.css?v=16">
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 </head>
@@ -53,6 +53,91 @@
                 </div>
             </div>
         </div>
+
+        <details class="nerds">
+            <summary>For the nerds — how the data is gathered</summary>
+            <div class="nerds-content">
+                <h4>The short version</h4>
+                <p>
+                    Bloomberg publishes a public ranking of the 500 wealthiest people at
+                    <code>bloomberg.com/billionaires/</code>, plus a profile page per person.
+                    A scheduler hits the list page on a cron and writes the current numbers
+                    to a local SQLite database. A separate one-shot backfill walks every
+                    profile page and pulls each person's full daily net-worth history
+                    (some go back to 2012). After backfill, the daily scrape continues to
+                    extend that history by one row per person per day. The database
+                    file is the source of truth; there's no third-party tracking or
+                    analytics in the page you're looking at.
+                </p>
+
+                <h4>The technical version</h4>
+                <p><strong>Sources.</strong>
+                    Both pages embed JSON inside <code>&lt;script&gt;</code> tags as
+                    JavaScript globals — <code>window.top500</code> on the list page (an
+                    array of 500 person records with rank, net worth, asset breakdowns,
+                    biography, milestones, schools, etc.) and <code>window.profileData</code>
+                    on each profile page (the same record plus a <code>stats</code> array
+                    of <code>[date, net_worth_usd]</code> pairs going back to whenever
+                    Bloomberg first indexed that person).
+                </p>
+                <p><strong>Fetching.</strong>
+                    Bloomberg fingerprints non-browser TLS clients and serves a captcha
+                    page. <code>curl_cffi</code> impersonates Chrome's TLS handshake and
+                    HTTP/2 settings, so the responses come back as real HTML. A regex
+                    pulls the JSON literal out of the HTML and <code>json.loads</code>
+                    parses it.
+                </p>
+                <p><strong>Storage.</strong>
+                    Three tables in SQLite:
+                </p>
+                <ul>
+                    <li>
+                        <code>persons</code> — static-ish fields (name, citizenship,
+                        biography, slug). Upserted on <code>person_id</code>.
+                    </li>
+                    <li>
+                        <code>snapshots</code> — append-only time-series of rich data
+                        (rank, net worth, last/ytd change, public/private/cash asset
+                        totals + JSON breakdowns, liabilities) — one row per scrape per
+                        person.
+                    </li>
+                    <li>
+                        <code>wealth_history</code> — narrow daily series, primary key
+                        <code>(person_id, date)</code>. Idempotent: backfilling and the
+                        daily scrape both <code>INSERT OR REPLACE</code> into it.
+                    </li>
+                </ul>
+                <p><strong>Schedule.</strong>
+                    APScheduler runs cron-style jobs in-process. Each daily scrape pulls
+                    the list page, writes to <code>persons</code> and <code>snapshots</code>,
+                    and appends today's row to <code>wealth_history</code> — so the
+                    history stays current without ever re-fetching profiles.
+                </p>
+                <p><strong>Backfill.</strong>
+                    A background thread iterates every person, fetches their profile,
+                    parses <code>stats</code>, bulk-inserts to <code>wealth_history</code>.
+                    1.5s sleep between requests keeps it polite — ~13 minutes for all 500.
+                    A "Sync from Snapshots" button copies any
+                    <code>(person_id, date, net_worth)</code> pair that exists in
+                    <code>snapshots</code> but not yet in <code>wealth_history</code>,
+                    catching the small gap between deploy and first backfill.
+                </p>
+                <p><strong>Derived fields.</strong>
+                    Bloomberg doesn't publish gender. We approximate it by counting
+                    gendered pronouns and role words in the biography
+                    (<em>he / his / chairman</em> vs <em>she / her / chairwoman</em>) and
+                    record a confidence score. Birth year is extracted from
+                    <code>milestones[0]</code> when it mentions "born", otherwise computed
+                    from age. Both are heuristics — treat them as hints, not facts.
+                </p>
+                <p><strong>Stack.</strong>
+                    FastAPI + Uvicorn (single port serves API and static frontend),
+                    SQLite, APScheduler, curl_cffi for fetching, Alpine.js + Chart.js for
+                    the UI. The whole thing fits in one Docker container with a mounted
+                    volume for the database.
+                </p>
+            </div>
+        </details>
     </main>
 
     <!-- Table Tab -->
