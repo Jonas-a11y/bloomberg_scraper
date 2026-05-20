@@ -75,6 +75,34 @@ def snapshots():
     return get_snapshot_dates()
 
 
+@router.get("/analytics/concentration")
+def concentration(min_count: int = 100):
+    """Daily share of total wealth held by top 1 / 10 / 100 within the cohort
+    we have history for. Note: wealth_history only includes people who are
+    currently in the top 500, so historical top-N reflects today's survivors."""
+    conn = get_db()
+    cursor = conn.execute("""
+        WITH ranked AS (
+            SELECT date, net_worth_usd,
+                   ROW_NUMBER() OVER (PARTITION BY date ORDER BY net_worth_usd DESC) AS rk
+            FROM wealth_history
+        )
+        SELECT date,
+               SUM(net_worth_usd)                                              AS total,
+               SUM(CASE WHEN rk = 1   THEN net_worth_usd ELSE 0 END)           AS top_1,
+               SUM(CASE WHEN rk <= 10 THEN net_worth_usd ELSE 0 END)           AS top_10,
+               SUM(CASE WHEN rk <= 100 THEN net_worth_usd ELSE 0 END)          AS top_100,
+               COUNT(*)                                                        AS count
+        FROM ranked
+        GROUP BY date
+        HAVING count >= ?
+        ORDER BY date
+    """, (min_count,))
+    rows = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return rows
+
+
 @router.get("/snapshots/compare")
 def compare_snapshots(from_date: str = Query(...), to_date: str = Query(...)):
     conn = get_db()

@@ -14,3 +14,9 @@ data/
 # Standalone scripts (not part of the web app)
 scrape_bloomberg.py
 build_master_dataset.py
+
+# Tests (kept out of public repo; existing tracked tests stay tracked)
+tests/test_family.py
+tests/test_export_fields.py
+tests/test_format_js.py
+tests/conftest_refactor.py

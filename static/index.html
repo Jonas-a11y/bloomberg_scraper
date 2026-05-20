@@ -4,9 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Bloomberg Scraper</title>
-    <link rel="stylesheet" href="/style.css?v=16">
+    <link rel="stylesheet" href="/style.css?v=19">
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+    <script src="https://cdn.jsdelivr.net/npm/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
 </head>
 <body x-data="app()" x-init="init()">
     <nav>
@@ -15,6 +16,7 @@
             <button :class="{ active: tab === 'dashboard' }" @click="tab = 'dashboard'">Dashboard</button>
             <button :class="{ active: tab === 'table' }" @click="tab = 'table'; loadTable()">Table</button>
             <button :class="{ active: tab === 'analytics' }" @click="tab = 'analytics'; loadAnalytics()">Analytics</button>
+            <button :class="{ active: tab === 'families' }" @click="tab = 'families'; loadFamilies()">Network</button>
             <button :class="{ active: tab === 'scraper' }" @click="tab = 'scraper'; loadScraper()">Scraper</button>
             <button :class="{ active: tab === 'export' }" @click="tab = 'export'; if (!tableData.data.length) loadTable()">Export</button>
         </div>
@@ -229,6 +231,23 @@
             </div>
             <canvas id="wealthChart"></canvas>
         </div>
+
+        <div class="chart-area">
+            <h3>Wealth Concentration Over Time</h3>
+            <p class="muted" style="margin-bottom: 8px;">
+                Share of total wealth held by the top 1, top 10, and top 100 within
+                Bloomberg's current 500. Pre-2015 values reflect a small surviving cohort —
+                interpret with that bias in mind.
+            </p>
+            <div class="range-tabs">
+                <template x-for="r in ['1Y','3Y','5Y','10Y','All']" :key="r">
+                    <button :class="{ active: concentrationRange === r }"
+                            @click="setConcentrationRange(r)" x-text="r"></button>
+                </template>
+            </div>
+            <canvas id="concentrationChart"></canvas>
+        </div>
+
         <div class="aggregate-grid">
             <div class="aggregate-card">
                 <h3>Wealth by Industry</h3>
@@ -246,6 +265,119 @@
                 <h3>Age Distribution</h3>
                 <canvas id="ageChart"></canvas>
             </div>
+        </div>
+    </main>
+
+    <!-- Families Tab -->
+    <main x-show="tab === 'families'">
+        <div class="families-header">
+            <div>
+                <h3 style="margin-bottom: 4px;">Network graph</h3>
+                <p class="muted">
+                    Family ties plus shared employers, schools, founded companies, and boards
+                    among Bloomberg's 500 — sourced from Wikidata. Entities only appear when
+                    they bridge ≥ 2 billionaires.
+                </p>
+            </div>
+            <div style="display: flex; gap: 8px; align-items: center;">
+                <label class="toggle">
+                    <input type="checkbox" x-model="familiesHideIsolated" @change="renderFamilyGraph()">
+                    <span class="toggle-label">Hide isolated</span>
+                </label>
+                <button class="btn-primary" @click="triggerFamilyRefresh()" :disabled="familiesRefresh.running">
+                    <span x-text="familiesRefresh.running ? 'Refreshing…' : 'Refresh from Wikidata'"></span>
+                </button>
+            </div>
+        </div>
+
+        <div class="path-finder">
+            <strong>Find a path</strong>
+
+            <div class="path-slot">
+                <div class="tags">
+                    <template x-if="pathFromPerson">
+                        <span class="tag" style="background:#4ecdc4">
+                            <span x-text="pathFromPerson.common_name"></span>
+                            <span class="tag-remove" @click="pathFromPerson = null; pathFromQuery = ''; pathFromResults = []">×</span>
+                        </span>
+                    </template>
+                    <input type="text" placeholder="From…" x-show="!pathFromPerson"
+                           x-model="pathFromQuery" @input.debounce.200ms="searchPath('from')">
+                </div>
+                <div class="autocomplete" x-show="pathFromResults.length > 0">
+                    <template x-for="r in pathFromResults" :key="r.person_id">
+                        <div class="autocomplete-item" @click="selectPathPerson('from', r)">
+                            <span x-text="r.common_name"></span>
+                            <span class="muted" x-text="formatWealth(r.net_worth_usd) + ' · #' + r.rank"></span>
+                        </div>
+                    </template>
+                </div>
+            </div>
+
+            <span class="muted">→</span>
+
+            <div class="path-slot">
+                <div class="tags">
+                    <template x-if="pathToPerson">
+                        <span class="tag" style="background:#ff6b6b">
+                            <span x-text="pathToPerson.common_name"></span>
+                            <span class="tag-remove" @click="pathToPerson = null; pathToQuery = ''; pathToResults = []">×</span>
+                        </span>
+                    </template>
+                    <input type="text" placeholder="To…" x-show="!pathToPerson"
+                           x-model="pathToQuery" @input.debounce.200ms="searchPath('to')">
+                </div>
+                <div class="autocomplete" x-show="pathToResults.length > 0">
+                    <template x-for="r in pathToResults" :key="r.person_id">
+                        <div class="autocomplete-item" @click="selectPathPerson('to', r)">
+                            <span x-text="r.common_name"></span>
+                            <span class="muted" x-text="formatWealth(r.net_worth_usd) + ' · #' + r.rank"></span>
+                        </div>
+                    </template>
+                </div>
+            </div>
+
+            <button class="btn-sm" @click="findPath()"
+                    :disabled="!pathFromPerson || !pathToPerson || pathFromPerson.person_id === pathToPerson.person_id">Find path</button>
+            <button class="btn-sm" @click="clearPath()" x-show="pathChain.length > 0 || pathMessage">Clear</button>
+            <span class="muted" x-show="pathMessage" x-text="pathMessage"></span>
+        </div>
+
+        <div class="path-result" x-show="pathChain.length > 0">
+            <template x-for="(step, idx) in pathChain" :key="idx">
+                <span class="path-step">
+                    <span class="path-arrow muted" x-show="idx > 0" x-text="' —[' + step.role + ']→ '"></span>
+                    <span :class="step.kind === 'person' ? 'path-person' : 'path-entity'" x-text="step.name"></span>
+                </span>
+            </template>
+        </div>
+
+        <div class="families-status" x-show="familiesRefresh.running || familiesRefresh.message">
+            <div x-show="familiesRefresh.running">
+                <strong x-text="familiesRefresh.message || 'Working…'"></strong>
+                <span class="muted" x-show="familiesRefresh.stage === 'resolve'"
+                      x-text="' — ' + familiesRefresh.done + ' / ' + familiesRefresh.total + ' (' + familiesRefresh.qids_resolved + ' resolved)'"></span>
+            </div>
+            <div class="muted" x-show="!familiesRefresh.running &amp;&amp; familiesRefresh.message" x-text="familiesRefresh.message"></div>
+        </div>
+
+        <div class="family-graph" id="familyGraph" x-show="hasNetworkData()"></div>
+        <div class="family-empty" x-show="!hasNetworkData()">
+            <p class="muted">
+                No edges yet. Click "Refresh from Wikidata" — first run takes ~5 minutes
+                (one wbsearchentities call per person, then batched SPARQL queries for family
+                relations, entity relations, and entity labels).
+            </p>
+        </div>
+
+        <div class="family-legend" x-show="hasNetworkData()">
+            <span class="legend-item"><span class="legend-swatch" style="background:#ff6b6b"></span> spouse</span>
+            <span class="legend-item"><span class="legend-swatch" style="background:#4ecdc4"></span> parent / child</span>
+            <span class="legend-item"><span class="legend-swatch" style="background:#fdcb6e"></span> sibling</span>
+            <span class="legend-item"><span class="legend-swatch" style="background:#a29bfe"></span> relative</span>
+            <span class="legend-item"><span class="legend-dot" style="background:#0984e3"></span> company</span>
+            <span class="legend-item"><span class="legend-dot" style="background:#00b894"></span> school</span>
+            <span class="legend-item"><span class="legend-dot" style="background:#e17055"></span> board / org</span>
         </div>
     </main>
 
@@ -452,9 +584,15 @@
         </div>
 
         <div class="export-card">
-            <h3>Download Database</h3>
-            <p>Download the raw SQLite file for local analysis.</p>
-            <a class="btn-primary" href="/api/export/bloomberg.db" download="bloomberg.db">Download bloomberg.db</a>
+            <h3>Download Databases</h3>
+            <p>Download the raw SQLite files for local analysis. The Bloomberg DB
+               holds people, snapshots, and wealth history. The Network DB holds
+               the Wikidata-derived family edges and bridge entities — it includes
+               its own person index so it's queryable on its own.</p>
+            <div style="display: flex; gap: 12px; flex-wrap: wrap;">
+                <a class="btn-primary" href="/api/export/bloomberg.db" download="bloomberg.db">Download bloomberg.db</a>
+                <a class="btn-primary" href="/api/export/network.db" download="network.db">Download network.db</a>
+            </div>
         </div>
     </main>
 
@@ -568,6 +706,15 @@
         </template>
     </aside>
 
-    <script src="/app.js?v=17"></script>
+    <script src="/js/format.js?v=1"></script>
+    <script src="/js/charts.js?v=1"></script>
+    <script src="/js/tabs/dashboard.js?v=1"></script>
+    <script src="/js/tabs/table.js?v=1"></script>
+    <script src="/js/tabs/analytics.js?v=1"></script>
+    <script src="/js/tabs/families.js?v=1"></script>
+    <script src="/js/tabs/scraper.js?v=1"></script>
+    <script src="/js/tabs/export.js?v=1"></script>
+    <script src="/js/tabs/panel.js?v=1"></script>
+    <script src="/app.js?v=25"></script>
 </body>
 </html>

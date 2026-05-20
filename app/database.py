@@ -1,7 +1,22 @@
+"""SQLite layer for the Bloomberg billionaires app.
+
+Two databases:
+- bloomberg.db   — billionaire metadata, snapshots, wealth history, scraper state.
+- network.db     — Wikidata-derived graph (persons_index, family_edges, entities).
+
+Kept separate so the network DB can be downloaded standalone and rebuilt without
+touching scrape data.
+"""
 import sqlite3
 from pathlib import Path
 
+
+# =============================================================================
+# Paths & schemas
+# =============================================================================
+
 DB_PATH = Path("data/bloomberg.db")
+NETWORK_DB_PATH = Path("data/network.db")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS persons (
@@ -82,6 +97,43 @@ CREATE TABLE IF NOT EXISTS schedule_config (
 INSERT OR IGNORE INTO schedule_config (id) VALUES (1);
 """
 
+NETWORK_SCHEMA = """
+CREATE TABLE IF NOT EXISTS persons_index (
+    person_id    INTEGER PRIMARY KEY,
+    common_name  TEXT,
+    wikidata_qid TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_persons_index_qid ON persons_index(wikidata_qid);
+
+CREATE TABLE IF NOT EXISTS family_edges (
+    person_id    INTEGER NOT NULL,
+    related_id   INTEGER NOT NULL,
+    kind         TEXT NOT NULL,
+    source       TEXT NOT NULL DEFAULT 'wikidata',
+    PRIMARY KEY (person_id, related_id, kind)
+);
+
+CREATE INDEX IF NOT EXISTS idx_family_edges_related ON family_edges(related_id);
+
+CREATE TABLE IF NOT EXISTS entities (
+    entity_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    qid       TEXT NOT NULL UNIQUE,
+    name      TEXT,
+    kind      TEXT
+);
+
+CREATE TABLE IF NOT EXISTS entity_links (
+    person_id INTEGER NOT NULL,
+    entity_id INTEGER NOT NULL,
+    role      TEXT NOT NULL,
+    source    TEXT NOT NULL DEFAULT 'wikidata',
+    PRIMARY KEY (person_id, entity_id, role)
+);
+
+CREATE INDEX IF NOT EXISTS idx_entity_links_entity ON entity_links(entity_id);
+"""
+
 PERSON_COLUMNS = [
     "person_id", "common_name", "full_name", "first_name", "last_name",
     "middle_name", "citizenship", "age", "birth_year", "gender",
@@ -99,6 +151,10 @@ SNAPSHOT_COLUMNS = [
 ]
 
 
+# =============================================================================
+# Connections
+# =============================================================================
+
 def get_db(db_path=None):
     path = str(db_path or DB_PATH)
     conn = sqlite3.connect(path)
@@ -107,13 +163,32 @@ def get_db(db_path=None):
     return conn
 
 
-def init_db(db_path=None):
+def get_network_db(db_path=None):
+    path = str(db_path or NETWORK_DB_PATH)
+    conn = sqlite3.connect(path)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+# =============================================================================
+# Init & migrations
+# =============================================================================
+
+def init_db(db_path=None, network_db_path=None):
     path = str(db_path or DB_PATH)
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path)
     conn.executescript(SCHEMA)
     _migrate_legacy_table(conn)
     conn.close()
+
+    npath = str(network_db_path or NETWORK_DB_PATH)
+    Path(npath).parent.mkdir(parents=True, exist_ok=True)
+    nconn = sqlite3.connect(npath)
+    nconn.executescript(NETWORK_SCHEMA)
+    nconn.close()
+
+    _migrate_network_data_out_of_main(path, npath)
 
 
 def _migrate_legacy_table(conn):
@@ -170,91 +245,93 @@ def _migrate_legacy_table(conn):
     conn.commit()
 
 
+def _migrate_network_data_out_of_main(main_path, network_path):
+    """One-shot: if the legacy bloomberg.db still has wikidata_qid /
+    family_edges / entities / entity_links, copy them into the network DB
+    and drop them from the main DB. Idempotent."""
+    main = sqlite3.connect(main_path)
+    main.row_factory = sqlite3.Row
+    try:
+        main.execute("ATTACH DATABASE ? AS net", (network_path,))
+
+        cols = [r[1] for r in main.execute("PRAGMA table_info(persons)").fetchall()]
+        if "wikidata_qid" in cols:
+            main.execute("""
+                INSERT OR IGNORE INTO net.persons_index (person_id, common_name, wikidata_qid)
+                SELECT person_id, common_name, wikidata_qid FROM persons
+                WHERE wikidata_qid IS NOT NULL
+            """)
+
+        legacy_tables = ("family_edges", "entities", "entity_links")
+        existing = {
+            r[0] for r in main.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name IN (?, ?, ?)",
+                legacy_tables,
+            ).fetchall()
+        }
+        if "family_edges" in existing:
+            main.execute("""
+                INSERT OR IGNORE INTO net.family_edges (person_id, related_id, kind, source)
+                SELECT person_id, related_id, kind, source FROM family_edges
+            """)
+        if "entities" in existing:
+            main.execute("""
+                INSERT OR IGNORE INTO net.entities (entity_id, qid, name, kind)
+                SELECT entity_id, qid, name, kind FROM entities
+            """)
+        if "entity_links" in existing:
+            main.execute("""
+                INSERT OR IGNORE INTO net.entity_links (person_id, entity_id, role, source)
+                SELECT person_id, entity_id, role, source FROM entity_links
+            """)
+        main.commit()
+
+        for t in ("entity_links", "entities", "family_edges"):
+            if t in existing:
+                main.execute(f"DROP TABLE {t}")
+        main.commit()
+    finally:
+        main.execute("DETACH DATABASE net")
+        main.close()
+
+
+# =============================================================================
+# Persons & snapshots
+# =============================================================================
+
 def insert_scrape_data(db_path, rows):
-    """Insert scraped data into persons and snapshots tables."""
+    """Insert scraped data into persons and snapshots tables.
+
+    Also appends a wealth_history row for each person on the snapshot date,
+    so the daily series stays in sync without a separate backfill call.
+    """
     conn = get_db(db_path)
     scraped_at = rows[0]["scraped_at"] if rows else None
     today = scraped_at.split("T")[0] if scraped_at else None
 
+    person_placeholders = ", ".join(["?"] * len(PERSON_COLUMNS))
+    person_cols = ", ".join(PERSON_COLUMNS)
+    snapshot_placeholders = ", ".join(["?"] * len(SNAPSHOT_COLUMNS))
+    snapshot_cols = ", ".join(SNAPSHOT_COLUMNS)
+
     for row in rows:
-        person_vals = tuple(row.get(col) for col in PERSON_COLUMNS)
-        placeholders = ", ".join(["?"] * len(PERSON_COLUMNS))
-        cols = ", ".join(PERSON_COLUMNS)
         conn.execute(
-            f"INSERT OR REPLACE INTO persons ({cols}) VALUES ({placeholders})",
-            person_vals,
+            f"INSERT OR REPLACE INTO persons ({person_cols}) VALUES ({person_placeholders})",
+            tuple(row.get(col) for col in PERSON_COLUMNS),
         )
-
-        snapshot_vals = tuple(row.get(col) for col in SNAPSHOT_COLUMNS)
-        placeholders = ", ".join(["?"] * len(SNAPSHOT_COLUMNS))
-        cols = ", ".join(SNAPSHOT_COLUMNS)
         conn.execute(
-            f"INSERT INTO snapshots ({cols}) VALUES ({placeholders})",
-            snapshot_vals,
+            f"INSERT INTO snapshots ({snapshot_cols}) VALUES ({snapshot_placeholders})",
+            tuple(row.get(col) for col in SNAPSHOT_COLUMNS),
         )
-
         if today and row.get("net_worth_usd") is not None:
             conn.execute(
-                "INSERT OR REPLACE INTO wealth_history (person_id, date, net_worth_usd) VALUES (?, ?, ?)",
+                "INSERT OR REPLACE INTO wealth_history (person_id, date, net_worth_usd) "
+                "VALUES (?, ?, ?)",
                 (row["person_id"], today, row["net_worth_usd"]),
             )
 
     conn.commit()
     conn.close()
-
-
-def insert_wealth_history(db_path, person_id, stats):
-    """Bulk upsert (date, net_worth_usd) pairs for a person. Returns rows written."""
-    if not stats:
-        return 0
-    conn = get_db(db_path)
-    conn.executemany(
-        "INSERT OR REPLACE INTO wealth_history (person_id, date, net_worth_usd) VALUES (?, ?, ?)",
-        [(person_id, d, w) for d, w in stats if d and w is not None],
-    )
-    conn.commit()
-    written = conn.total_changes
-    conn.close()
-    return written
-
-
-def get_wealth_history(person_id, db_path=None):
-    conn = get_db(db_path)
-    cursor = conn.execute(
-        "SELECT date, net_worth_usd FROM wealth_history WHERE person_id = ? ORDER BY date",
-        (person_id,),
-    )
-    rows = [dict(row) for row in cursor.fetchall()]
-    conn.close()
-    return rows
-
-
-def get_history_coverage(db_path=None):
-    """Returns (persons_with_history, total_history_rows)."""
-    conn = get_db(db_path)
-    persons = conn.execute(
-        "SELECT COUNT(DISTINCT person_id) FROM wealth_history"
-    ).fetchone()[0]
-    total = conn.execute("SELECT COUNT(*) FROM wealth_history").fetchone()[0]
-    conn.close()
-    return {"persons": persons, "rows": total}
-
-
-def sync_history_from_snapshots(db_path=None):
-    """Backfill wealth_history with any (person_id, date, net_worth) pairs that
-    exist in snapshots but not yet in wealth_history. Returns rows added."""
-    conn = get_db(db_path)
-    before = conn.execute("SELECT COUNT(*) FROM wealth_history").fetchone()[0]
-    conn.execute("""
-        INSERT OR IGNORE INTO wealth_history (person_id, date, net_worth_usd)
-        SELECT person_id, DATE(scraped_at), net_worth_usd
-        FROM snapshots
-        WHERE net_worth_usd IS NOT NULL
-    """)
-    conn.commit()
-    after = conn.execute("SELECT COUNT(*) FROM wealth_history").fetchone()[0]
-    conn.close()
-    return after - before
 
 
 def get_latest_snapshot(db_path=None):
@@ -283,6 +360,68 @@ def get_snapshot_dates(db_path=None):
     return dates
 
 
+# =============================================================================
+# Wealth history
+# =============================================================================
+
+def insert_wealth_history(db_path, person_id, stats):
+    """Bulk upsert (date, net_worth_usd) pairs for a person. Returns rows written."""
+    if not stats:
+        return 0
+    conn = get_db(db_path)
+    conn.executemany(
+        "INSERT OR REPLACE INTO wealth_history (person_id, date, net_worth_usd) VALUES (?, ?, ?)",
+        [(person_id, d, w) for d, w in stats if d and w is not None],
+    )
+    conn.commit()
+    written = conn.total_changes
+    conn.close()
+    return written
+
+
+def get_wealth_history(person_id, db_path=None):
+    conn = get_db(db_path)
+    cursor = conn.execute(
+        "SELECT date, net_worth_usd FROM wealth_history WHERE person_id = ? ORDER BY date",
+        (person_id,),
+    )
+    rows = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return rows
+
+
+def get_history_coverage(db_path=None):
+    """Returns {persons: int, rows: int}."""
+    conn = get_db(db_path)
+    persons = conn.execute(
+        "SELECT COUNT(DISTINCT person_id) FROM wealth_history"
+    ).fetchone()[0]
+    total = conn.execute("SELECT COUNT(*) FROM wealth_history").fetchone()[0]
+    conn.close()
+    return {"persons": persons, "rows": total}
+
+
+def sync_history_from_snapshots(db_path=None):
+    """Backfill wealth_history with any (person_id, date, net_worth) pairs that
+    exist in snapshots but not yet in wealth_history. Returns rows added."""
+    conn = get_db(db_path)
+    before = conn.execute("SELECT COUNT(*) FROM wealth_history").fetchone()[0]
+    conn.execute("""
+        INSERT OR IGNORE INTO wealth_history (person_id, date, net_worth_usd)
+        SELECT person_id, DATE(scraped_at), net_worth_usd
+        FROM snapshots
+        WHERE net_worth_usd IS NOT NULL
+    """)
+    conn.commit()
+    after = conn.execute("SELECT COUNT(*) FROM wealth_history").fetchone()[0]
+    conn.close()
+    return after - before
+
+
+# =============================================================================
+# Dashboard aggregates
+# =============================================================================
+
 def get_dashboard_stats(db_path=None):
     conn = get_db(db_path)
     latest = conn.execute(
@@ -290,8 +429,10 @@ def get_dashboard_stats(db_path=None):
     ).fetchone()
     if not latest or not latest[0]:
         conn.close()
-        return {"total_wealth": 0, "count": 0, "snapshots": 0, "latest_scrape": None,
-                "history_rows": 0, "history_persons": 0, "history_earliest": None}
+        return {
+            "total_wealth": 0, "count": 0, "snapshots": 0, "latest_scrape": None,
+            "history_rows": 0, "history_persons": 0, "history_earliest": None,
+        }
     latest_at = latest[0]
     stats = conn.execute("""
         SELECT
