@@ -1,4 +1,4 @@
-from app.scraper import scrape_billionaires, extract_birth_year, infer_gender, flatten_person
+from app.scraper import scrape_billionaires, extract_birth_year, infer_gender, flatten_person, parse_profile_history
 
 
 def test_extract_birth_year_from_milestones():
@@ -46,3 +46,16 @@ def test_flatten_person():
     assert row["rank"] == 1
     assert row["net_worth_usd"] == 100
     assert row["gender"] == "male"
+
+
+def test_parse_profile_history():
+    html = (
+        'foo bar window.profileData = {"slug":"x","stats":[["2020-01-01",1000],["2020-01-02",1100],["2020-01-03",1200]]};'
+        '</script>more html'
+    )
+    pairs = parse_profile_history(html)
+    assert pairs == [("2020-01-01", 1000), ("2020-01-02", 1100), ("2020-01-03", 1200)]
+
+
+def test_parse_profile_history_missing():
+    assert parse_profile_history("<html>nothing here</html>") == []

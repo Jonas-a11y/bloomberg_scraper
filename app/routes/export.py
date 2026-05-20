@@ -131,6 +131,53 @@ def export_db():
     )
 
 
+def _query_wealth_history(from_date, to_date, person_id):
+    conn = get_db()
+    conditions = []
+    params = []
+    if from_date:
+        conditions.append("h.date >= ?")
+        params.append(from_date)
+    if to_date:
+        conditions.append("h.date <= ?")
+        params.append(to_date)
+    if person_id:
+        conditions.append("h.person_id = ?")
+        params.append(person_id)
+    where = " AND ".join(conditions) if conditions else "1=1"
+    sql = f"""
+        SELECT h.person_id, p.common_name, p.slug, h.date, h.net_worth_usd
+        FROM wealth_history h
+        JOIN persons p ON h.person_id = p.person_id
+        WHERE {where}
+        ORDER BY h.person_id, h.date
+    """
+    cursor = conn.execute(sql, params)
+    rows = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return rows
+
+
+@router.get("/export/wealth_history.csv")
+def export_wealth_history_csv(
+    from_date: str | None = None,
+    to_date: str | None = None,
+    person_id: int | None = None,
+):
+    rows = _query_wealth_history(from_date, to_date, person_id)
+    return _csv_response(rows, "wealth_history.csv")
+
+
+@router.get("/export/wealth_history.json")
+def export_wealth_history_json(
+    from_date: str | None = None,
+    to_date: str | None = None,
+    person_id: int | None = None,
+):
+    rows = _query_wealth_history(from_date, to_date, person_id)
+    return _json_response(rows, "wealth_history.json")
+
+
 AVAILABLE_FIELDS = {
     "scraped_at": "s.scraped_at",
     "person_id": "p.person_id",

@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Bloomberg Scraper</title>
-    <link rel="stylesheet" href="/style.css?v=12">
+    <link rel="stylesheet" href="/style.css?v=15">
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 </head>
@@ -16,7 +16,7 @@
             <button :class="{ active: tab === 'table' }" @click="tab = 'table'; loadTable()">Table</button>
             <button :class="{ active: tab === 'analytics' }" @click="tab = 'analytics'; loadAnalytics()">Analytics</button>
             <button :class="{ active: tab === 'scraper' }" @click="tab = 'scraper'; loadScraper()">Scraper</button>
-            <button :class="{ active: tab === 'export' }" @click="tab = 'export'">Export</button>
+            <button :class="{ active: tab === 'export' }" @click="tab = 'export'; if (!tableData.data.length) loadTable()">Export</button>
         </div>
         <div class="nav-status">
             <span class="status-dot" :class="scraperStatus.status"></span>
@@ -38,6 +38,19 @@
             <div class="stat-card">
                 <div class="stat-label">Snapshots</div>
                 <div class="stat-value" x-text="dashboard.snapshots"></div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Daily History</div>
+                <div class="stat-value" x-text="(dashboard.history_rows || 0).toLocaleString()"></div>
+                <div class="muted" x-show="dashboard.history_persons">
+                    <span x-text="dashboard.history_persons"></span> people
+                    <span x-show="dashboard.history_earliest">
+                        · since <span x-text="dashboard.history_earliest"></span>
+                    </span>
+                </div>
+                <div class="muted" x-show="!dashboard.history_persons">
+                    Run "Backfill History" in the Scraper tab to populate
+                </div>
             </div>
         </div>
     </main>
@@ -123,6 +136,12 @@
             </div>
         </div>
         <div class="chart-area">
+            <div class="range-tabs">
+                <template x-for="r in ['YTD','6M','1Y','3Y','All']" :key="r">
+                    <button :class="{ active: wealthRange === (r === 'All' ? 'ALL' : r) }"
+                            @click="setWealthRange(r === 'All' ? 'ALL' : r)" x-text="r"></button>
+                </template>
+            </div>
             <canvas id="wealthChart"></canvas>
         </div>
         <div class="aggregate-grid">
@@ -156,6 +175,32 @@
                 </div>
             </div>
             <button class="btn-primary" @click="triggerScrape()" :disabled="scraperStatus.status === 'running'">Run Now</button>
+        </div>
+
+        <div class="scraper-status-card">
+            <div>
+                <strong>Historical Wealth Backfill</strong>
+                <div class="muted" x-show="!backfill.running && !backfill.total">
+                    Fetches each profile's daily wealth history from Bloomberg (~13 min, polite 1.5s/profile).
+                </div>
+                <div x-show="backfill.running || backfill.total">
+                    <span x-text="backfill.done + ' / ' + backfill.total + ' profiles'"></span>
+                    <span class="muted" x-show="backfill.errors" x-text="' (' + backfill.errors + ' errors)'"></span>
+                    <span class="muted" x-show="backfill.coverage">
+                        — coverage: <span x-text="backfill.coverage.persons"></span> people,
+                        <span x-text="(backfill.coverage.rows || 0).toLocaleString()"></span> rows
+                    </span>
+                </div>
+                <div class="muted" x-show="syncMessage" x-text="syncMessage"></div>
+            </div>
+            <div style="display: flex; gap: 8px;">
+                <button class="btn-small" @click="syncHistory()" :disabled="syncing">
+                    <span x-text="syncing ? 'Syncing...' : 'Sync from Snapshots'"></span>
+                </button>
+                <button class="btn-primary" @click="triggerBackfill()" :disabled="backfill.running">
+                    <span x-text="backfill.running ? 'Running...' : 'Backfill History'"></span>
+                </button>
+            </div>
         </div>
 
         <div class="schedule-card">
@@ -294,6 +339,34 @@
             <p class="muted" x-text="masterFields.length + ' fields selected'"></p>
         </div>
         <div class="export-card">
+            <h3>Wealth History</h3>
+            <p class="muted">Daily net worth time-series scraped from each profile (one row per person per day).</p>
+            <div class="form-row">
+                <label>Range:</label>
+                <input type="date" x-model="historyFrom">
+                <input type="date" x-model="historyTo">
+                <span class="muted">(leave blank for all)</span>
+            </div>
+            <div class="form-row">
+                <label>Person:</label>
+                <select x-model="historyPersonId">
+                    <option value="">All people</option>
+                    <template x-for="p in tableData.data" :key="p.person_id">
+                        <option :value="p.person_id" x-text="p.common_name"></option>
+                    </template>
+                </select>
+            </div>
+            <div class="form-row">
+                <label>Format:</label>
+                <div class="radio-group">
+                    <label><input type="radio" value="csv" x-model="historyFormat"> CSV</label>
+                    <label><input type="radio" value="json" x-model="historyFormat"> JSON</label>
+                </div>
+            </div>
+            <a class="btn-primary" :href="historyExportHref()" :download="'wealth_history.' + historyFormat">Download Wealth History</a>
+        </div>
+
+        <div class="export-card">
             <h3>Download Database</h3>
             <p>Download the raw SQLite file for local analysis.</p>
             <a class="btn-primary" href="/api/export/bloomberg.db" download="bloomberg.db">Download bloomberg.db</a>
@@ -331,6 +404,12 @@
                 <p class="panel-summary" x-show="panelPerson.net_worth_summary" x-text="panelPerson.net_worth_summary"></p>
 
                 <div class="panel-chart">
+                    <div class="range-tabs">
+                        <template x-for="r in ['YTD','6M','1Y','3Y','All']" :key="r">
+                            <button :class="{ active: panelRange === (r === 'All' ? 'ALL' : r) }"
+                                    @click="setPanelRange(r === 'All' ? 'ALL' : r)" x-text="r"></button>
+                        </template>
+                    </div>
                     <canvas id="panelChart"></canvas>
                 </div>
 
@@ -404,6 +483,6 @@
         </template>
     </aside>
 
-    <script src="/app.js?v=12"></script>
+    <script src="/app.js?v=17"></script>
 </body>
 </html>

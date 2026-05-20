@@ -9,6 +9,10 @@ function app() {
         industries: [],
         scraperStatus: { status: 'idle', next_run: null, last_success: null },
         scraperRuns: [],
+        backfill: { running: false, done: 0, total: 0, errors: 0, coverage: { persons: 0, rows: 0 } },
+        backfillTimer: null,
+        syncing: false,
+        syncMessage: '',
         schedule: { times: ['08:00'], timezone: 'UTC', enabled: true },
         selectedPeople: [],
         personQuery: '',
@@ -16,8 +20,12 @@ function app() {
         chartColors: ['#4ecdc4', '#ff6b6b', '#6c5ce7', '#fdcb6e', '#a29bfe', '#00b894', '#e17055', '#0984e3', '#d63031', '#6ab04c'],
         wealthChart: null,
         chartInstances: {},
+        wealthHistories: {},
+        wealthRange: '6M',
         panelOpen: false,
         panelPerson: null,
+        panelHistory: [],
+        panelRange: '6M',
         panelSchools: [],
         panelMilestones: [],
         panelFacts: [],
@@ -27,6 +35,10 @@ function app() {
         exportFormat: 'csv',
         exportFrom: '',
         exportTo: '',
+        historyFrom: '',
+        historyTo: '',
+        historyPersonId: '',
+        historyFormat: 'csv',
         masterFields: [],
         allFields: [],
         defaultFields: [],
@@ -88,6 +100,7 @@ function app() {
                 fetch(`/api/billionaires/${personId}/history`).then(r => r.json()),
             ]);
             this.panelPerson = detail;
+            this.panelHistory = history;
             this.panelSchools = detail.schools_json ? JSON.parse(detail.schools_json) : [];
             this.panelMilestones = detail.milestones_json ? JSON.parse(detail.milestones_json) : [];
             this.panelFacts = detail.facts_json ? JSON.parse(detail.facts_json) : [];
@@ -96,29 +109,55 @@ function app() {
                 private: detail.private_assets_json ? JSON.parse(detail.private_assets_json) : [],
             };
             this.panelOpen = true;
-            this.$nextTick(() => {
-                const ctx = document.getElementById('panelChart');
-                if (!ctx) return;
-                if (this.panelChart) this.panelChart.destroy();
-                this.panelChart = new Chart(ctx, {
-                    type: 'line',
-                    data: {
-                        labels: history.map(h => h.scraped_at.split('T')[0]),
-                        datasets: [{
-                            label: 'Net Worth',
-                            data: history.map(h => h.net_worth_usd),
-                            borderColor: '#4ecdc4',
-                            fill: false,
-                            tension: 0.1,
-                        }],
-                    },
-                    options: {
-                        responsive: true,
-                        plugins: { legend: { display: false } },
-                        scales: { y: { ticks: { callback: v => this.formatWealth(v) } } },
-                    },
-                });
+            this.$nextTick(() => this.renderPanelChart());
+        },
+
+        setPanelRange(range) {
+            this.panelRange = range;
+            this.renderPanelChart();
+        },
+
+        renderPanelChart() {
+            const ctx = document.getElementById('panelChart');
+            if (!ctx) return;
+            const filtered = this.filterRange(this.panelHistory, this.panelRange);
+            if (this.panelChart) this.panelChart.destroy();
+            this.panelChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: filtered.map(h => h.scraped_at.split('T')[0]),
+                    datasets: [{
+                        label: 'Net Worth',
+                        data: filtered.map(h => h.net_worth_usd),
+                        borderColor: '#4ecdc4',
+                        fill: false,
+                        tension: 0.1,
+                        pointRadius: 0,
+                    }],
+                },
+                options: {
+                    responsive: true,
+                    animation: false,
+                    plugins: { legend: { display: false } },
+                    scales: { y: { ticks: { callback: v => this.formatWealth(v) } } },
+                },
             });
+        },
+
+        rangeCutoff(range) {
+            const now = new Date();
+            if (range === 'YTD') return new Date(now.getFullYear(), 0, 1);
+            if (range === '6M') { const d = new Date(now); d.setMonth(d.getMonth() - 6); return d; }
+            if (range === '1Y') { const d = new Date(now); d.setFullYear(d.getFullYear() - 1); return d; }
+            if (range === '3Y') { const d = new Date(now); d.setFullYear(d.getFullYear() - 3); return d; }
+            return null;
+        },
+
+        filterRange(history, range) {
+            const cutoff = this.rangeCutoff(range);
+            if (!cutoff) return history;
+            const cutoffStr = cutoff.toISOString().split('T')[0];
+            return history.filter(h => (h.scraped_at || '').split('T')[0] >= cutoffStr);
         },
 
         async loadAnalytics() {
@@ -134,20 +173,49 @@ function app() {
         },
 
         async loadScraper() {
-            const [statusRes, runsRes, schedRes] = await Promise.all([
+            const [statusRes, runsRes, schedRes, backfillRes] = await Promise.all([
                 fetch('/api/scraper/status').then(r => r.json()),
                 fetch('/api/scraper/runs').then(r => r.json()),
                 fetch('/api/scraper/schedule').then(r => r.json()),
+                fetch('/api/scraper/backfill-history').then(r => r.json()),
             ]);
             this.scraperStatus = statusRes;
             this.scraperRuns = runsRes;
             this.schedule = schedRes;
+            this.backfill = backfillRes;
+            if (backfillRes.running && !this.backfillTimer) {
+                this.backfillTimer = setInterval(async () => {
+                    this.backfill = await fetch('/api/scraper/backfill-history').then(r => r.json());
+                    if (!this.backfill.running) {
+                        clearInterval(this.backfillTimer);
+                        this.backfillTimer = null;
+                    }
+                }, 3000);
+            }
         },
 
         async triggerScrape() {
             await fetch('/api/scraper/run', { method: 'POST' });
             this.scraperStatus.status = 'running';
             setTimeout(() => this.loadScraper(), 5000);
+        },
+
+        async triggerBackfill() {
+            await fetch('/api/scraper/backfill-history', { method: 'POST' });
+            this.loadScraper();
+        },
+
+        async syncHistory() {
+            this.syncing = true;
+            this.syncMessage = '';
+            try {
+                const res = await fetch('/api/scraper/sync-history', { method: 'POST' });
+                const data = await res.json();
+                this.syncMessage = `Synced ${data.added.toLocaleString()} rows from snapshots.`;
+                this.backfill.coverage = data.coverage;
+            } finally {
+                this.syncing = false;
+            }
         },
 
         async saveSchedule() {
@@ -206,17 +274,31 @@ function app() {
 
         async loadWealthChart() {
             if (this.selectedPeople.length === 0) return;
-            const datasets = [];
-            for (let i = 0; i < this.selectedPeople.length; i++) {
-                const p = this.selectedPeople[i];
-                const history = await fetch(`/api/billionaires/${p.person_id}/history`).then(r => r.json());
-                datasets.push({
-                    label: p.common_name,
-                    data: history.map(h => ({ x: h.scraped_at, y: h.net_worth_usd })),
-                    borderColor: this.chartColors[i % this.chartColors.length],
-                    fill: false, tension: 0.1,
-                });
+            const fresh = {};
+            for (const p of this.selectedPeople) {
+                fresh[p.person_id] = this.wealthHistories[p.person_id]
+                    || await fetch(`/api/billionaires/${p.person_id}/history`).then(r => r.json());
             }
+            this.wealthHistories = fresh;
+            this.renderWealthChart();
+        },
+
+        setWealthRange(range) {
+            this.wealthRange = range;
+            this.renderWealthChart();
+        },
+
+        renderWealthChart() {
+            const datasets = this.selectedPeople.map((p, i) => {
+                const history = this.wealthHistories[p.person_id] || [];
+                const filtered = this.filterRange(history, this.wealthRange);
+                return {
+                    label: p.common_name,
+                    data: filtered.map(h => ({ x: h.scraped_at, y: h.net_worth_usd })),
+                    borderColor: this.chartColors[i % this.chartColors.length],
+                    fill: false, tension: 0.1, pointRadius: 0,
+                };
+            });
             const ctx = document.getElementById('wealthChart');
             if (this.wealthChart) this.wealthChart.destroy();
             this.wealthChart = new Chart(ctx, {
@@ -224,6 +306,7 @@ function app() {
                 data: { datasets },
                 options: {
                     responsive: true,
+                    animation: false,
                     scales: {
                         x: { type: 'category' },
                         y: { ticks: { callback: v => this.formatWealth(v) } },
@@ -283,6 +366,16 @@ function app() {
             }
             const ext = this.exportFormat === 'json' ? 'json' : 'csv';
             return `/api/export/bloomberg_billionaires.${ext}?${params}`;
+        },
+
+        historyExportHref() {
+            const params = new URLSearchParams();
+            if (this.historyFrom) params.set('from_date', this.historyFrom);
+            if (this.historyTo) params.set('to_date', this.historyTo);
+            if (this.historyPersonId) params.set('person_id', this.historyPersonId);
+            const ext = this.historyFormat === 'json' ? 'json' : 'csv';
+            const qs = params.toString();
+            return `/api/export/wealth_history.${ext}${qs ? '?' + qs : ''}`;
         },
 
         selectAllFields() {

@@ -65,12 +65,18 @@ def list_billionaires(
 @router.get("/billionaires/{person_id}/history")
 def person_history(person_id: int):
     conn = get_db()
-    cursor = conn.execute("""
-        SELECT scraped_at, rank, net_worth_usd, last_change_usd, ytd_change_usd
-        FROM snapshots WHERE person_id = ?
-        ORDER BY scraped_at
-    """, (person_id,))
+    cursor = conn.execute(
+        "SELECT date AS scraped_at, net_worth_usd FROM wealth_history WHERE person_id = ? ORDER BY date",
+        (person_id,),
+    )
     rows = [dict(row) for row in cursor.fetchall()]
+    if not rows:
+        cursor = conn.execute("""
+            SELECT scraped_at, rank, net_worth_usd, last_change_usd, ytd_change_usd
+            FROM snapshots WHERE person_id = ?
+            ORDER BY scraped_at
+        """, (person_id,))
+        rows = [dict(row) for row in cursor.fetchall()]
     conn.close()
     return rows
 

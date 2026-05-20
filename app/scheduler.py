@@ -6,13 +6,14 @@ from datetime import datetime
 
 from apscheduler.schedulers.background import BackgroundScheduler
 
-from app.database import get_db, insert_scrape_data
-from app.scraper import scrape_billionaires
+from app.database import get_db, insert_scrape_data, insert_wealth_history
+from app.scraper import scrape_billionaires, fetch_person_history
 
 logger = logging.getLogger(__name__)
 
 scheduler = BackgroundScheduler()
 _is_running = False
+_backfill_state = {"running": False, "done": 0, "total": 0, "errors": 0, "started_at": None, "finished_at": None}
 
 
 def get_schedule_config():
@@ -118,3 +119,45 @@ def get_next_run():
     if not next_times:
         return None
     return min(next_times).isoformat()
+
+
+def run_history_backfill(delay_sec=1.5):
+    """Iterate every known person, fetch profile history, write to wealth_history."""
+    if _backfill_state["running"]:
+        return
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT person_id, slug, common_name FROM persons WHERE slug IS NOT NULL"
+    ).fetchall()
+    conn.close()
+
+    _backfill_state.update({
+        "running": True, "done": 0, "total": len(rows), "errors": 0,
+        "started_at": datetime.now().isoformat(), "finished_at": None,
+    })
+    logger.info(f"History backfill: {len(rows)} profiles to fetch")
+    try:
+        for person_id, slug, name in rows:
+            try:
+                stats = fetch_person_history(slug)
+                insert_wealth_history(None, person_id, stats)
+            except Exception as e:
+                _backfill_state["errors"] += 1
+                logger.warning(f"Backfill failed for {name} ({slug}): {e}")
+            _backfill_state["done"] += 1
+            time.sleep(delay_sec)
+    finally:
+        _backfill_state["running"] = False
+        _backfill_state["finished_at"] = datetime.now().isoformat()
+        logger.info(
+            f"Backfill done: {_backfill_state['done']}/{_backfill_state['total']} "
+            f"({_backfill_state['errors']} errors)"
+        )
+
+
+def get_backfill_state():
+    return dict(_backfill_state)
+
+
+def is_backfill_running():
+    return _backfill_state["running"]

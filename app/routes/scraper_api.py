@@ -3,7 +3,7 @@ import threading
 
 from fastapi import APIRouter
 
-from app.database import get_db
+from app.database import get_db, get_history_coverage, sync_history_from_snapshots
 from app.scheduler import (
     get_schedule_config,
     save_schedule_config,
@@ -11,6 +11,9 @@ from app.scheduler import (
     run_scrape,
     is_running,
     get_next_run,
+    run_history_backfill,
+    is_backfill_running,
+    get_backfill_state,
 )
 from app.models import ScheduleUpdate
 
@@ -61,3 +64,23 @@ def update_schedule(config: ScheduleUpdate):
     save_schedule_config(config.times, config.timezone, config.enabled)
     apply_schedule()
     return get_schedule_config()
+
+
+@router.post("/scraper/backfill-history")
+def trigger_backfill():
+    if is_backfill_running():
+        return {"status": "already_running", **get_backfill_state()}
+    thread = threading.Thread(target=run_history_backfill, daemon=True)
+    thread.start()
+    return {"status": "started"}
+
+
+@router.get("/scraper/backfill-history")
+def backfill_status():
+    return {**get_backfill_state(), "coverage": get_history_coverage()}
+
+
+@router.post("/scraper/sync-history")
+def sync_history():
+    added = sync_history_from_snapshots()
+    return {"added": added, "coverage": get_history_coverage()}

@@ -52,6 +52,16 @@ CREATE TABLE IF NOT EXISTS snapshots (
 CREATE INDEX IF NOT EXISTS idx_snapshots_person_scraped ON snapshots(person_id, scraped_at);
 CREATE INDEX IF NOT EXISTS idx_snapshots_scraped ON snapshots(scraped_at);
 
+CREATE TABLE IF NOT EXISTS wealth_history (
+    person_id     INTEGER NOT NULL,
+    date          TEXT NOT NULL,
+    net_worth_usd INTEGER NOT NULL,
+    PRIMARY KEY (person_id, date),
+    FOREIGN KEY (person_id) REFERENCES persons(person_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_wealth_history_date ON wealth_history(date);
+
 CREATE TABLE IF NOT EXISTS scrape_runs (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     started_at   DATETIME NOT NULL,
@@ -164,6 +174,7 @@ def insert_scrape_data(db_path, rows):
     """Insert scraped data into persons and snapshots tables."""
     conn = get_db(db_path)
     scraped_at = rows[0]["scraped_at"] if rows else None
+    today = scraped_at.split("T")[0] if scraped_at else None
 
     for row in rows:
         person_vals = tuple(row.get(col) for col in PERSON_COLUMNS)
@@ -182,8 +193,68 @@ def insert_scrape_data(db_path, rows):
             snapshot_vals,
         )
 
+        if today and row.get("net_worth_usd") is not None:
+            conn.execute(
+                "INSERT OR REPLACE INTO wealth_history (person_id, date, net_worth_usd) VALUES (?, ?, ?)",
+                (row["person_id"], today, row["net_worth_usd"]),
+            )
+
     conn.commit()
     conn.close()
+
+
+def insert_wealth_history(db_path, person_id, stats):
+    """Bulk upsert (date, net_worth_usd) pairs for a person. Returns rows written."""
+    if not stats:
+        return 0
+    conn = get_db(db_path)
+    conn.executemany(
+        "INSERT OR REPLACE INTO wealth_history (person_id, date, net_worth_usd) VALUES (?, ?, ?)",
+        [(person_id, d, w) for d, w in stats if d and w is not None],
+    )
+    conn.commit()
+    written = conn.total_changes
+    conn.close()
+    return written
+
+
+def get_wealth_history(person_id, db_path=None):
+    conn = get_db(db_path)
+    cursor = conn.execute(
+        "SELECT date, net_worth_usd FROM wealth_history WHERE person_id = ? ORDER BY date",
+        (person_id,),
+    )
+    rows = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return rows
+
+
+def get_history_coverage(db_path=None):
+    """Returns (persons_with_history, total_history_rows)."""
+    conn = get_db(db_path)
+    persons = conn.execute(
+        "SELECT COUNT(DISTINCT person_id) FROM wealth_history"
+    ).fetchone()[0]
+    total = conn.execute("SELECT COUNT(*) FROM wealth_history").fetchone()[0]
+    conn.close()
+    return {"persons": persons, "rows": total}
+
+
+def sync_history_from_snapshots(db_path=None):
+    """Backfill wealth_history with any (person_id, date, net_worth) pairs that
+    exist in snapshots but not yet in wealth_history. Returns rows added."""
+    conn = get_db(db_path)
+    before = conn.execute("SELECT COUNT(*) FROM wealth_history").fetchone()[0]
+    conn.execute("""
+        INSERT OR IGNORE INTO wealth_history (person_id, date, net_worth_usd)
+        SELECT person_id, DATE(scraped_at), net_worth_usd
+        FROM snapshots
+        WHERE net_worth_usd IS NOT NULL
+    """)
+    conn.commit()
+    after = conn.execute("SELECT COUNT(*) FROM wealth_history").fetchone()[0]
+    conn.close()
+    return after - before
 
 
 def get_latest_snapshot(db_path=None):
@@ -219,7 +290,8 @@ def get_dashboard_stats(db_path=None):
     ).fetchone()
     if not latest or not latest[0]:
         conn.close()
-        return {"total_wealth": 0, "count": 0, "snapshots": 0, "latest_scrape": None}
+        return {"total_wealth": 0, "count": 0, "snapshots": 0, "latest_scrape": None,
+                "history_rows": 0, "history_persons": 0, "history_earliest": None}
     latest_at = latest[0]
     stats = conn.execute("""
         SELECT
@@ -230,10 +302,16 @@ def get_dashboard_stats(db_path=None):
     snapshot_count = conn.execute(
         "SELECT COUNT(DISTINCT DATE(scraped_at)) FROM snapshots"
     ).fetchone()[0]
+    history = conn.execute(
+        "SELECT COUNT(*), COUNT(DISTINCT person_id), MIN(date) FROM wealth_history"
+    ).fetchone()
     conn.close()
     return {
         "total_wealth": stats[0] or 0,
         "count": stats[1] or 0,
         "snapshots": snapshot_count,
         "latest_scrape": latest_at,
+        "history_rows": history[0] or 0,
+        "history_persons": history[1] or 0,
+        "history_earliest": history[2],
     }

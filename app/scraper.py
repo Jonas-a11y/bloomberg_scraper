@@ -5,6 +5,7 @@ from datetime import datetime
 from curl_cffi import requests
 
 URL = "https://www.bloomberg.com/billionaires/"
+PROFILE_URL = "https://www.bloomberg.com/billionaires/profiles/{slug}/"
 
 HEADERS = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
@@ -142,3 +143,30 @@ def scrape_billionaires():
         row["updated_at"] = scraped_at
         rows.append(row)
     return rows
+
+
+def parse_profile_history(html):
+    """Extract daily [date, net_worth_usd] pairs from a profile page's window.profileData.stats."""
+    match = re.search(
+        r"window\.profileData\s*=\s*(\{.*?\})\s*;?\s*(?:</script>|window\.)",
+        html,
+        re.DOTALL,
+    )
+    if not match:
+        return []
+    try:
+        data = json.loads(match.group(1))
+    except json.JSONDecodeError:
+        return []
+    stats = data.get("stats", [])
+    return [(d, int(w)) for d, w in stats if d and w is not None]
+
+
+def fetch_person_history(slug):
+    """Fetch a single profile page and return its daily wealth history."""
+    response = requests.get(
+        PROFILE_URL.format(slug=slug), impersonate="chrome", headers=HEADERS
+    )
+    if response.status_code != 200:
+        raise RuntimeError(f"Profile request failed: {response.status_code}")
+    return parse_profile_history(response.text)
