@@ -22,7 +22,12 @@ def filter_bridges(triples, min_links=2, max_links=50):
 
 
 def write_entities_and_links(triples, metadata):
-    """Replace prior wikidata-sourced entity rows + entity_links with the new set."""
+    """Replace prior wikidata-sourced entity rows + entity_links with the new set.
+
+    `metadata` is {qid: dict} where dict has at least name + kind, optionally
+    description / inception_year / country / industry / website /
+    employee_count / revenue_usd / wikipedia_url.
+    """
     conn = get_network_db()
     qid_to_pid = {
         row["wikidata_qid"]: row["person_id"]
@@ -38,11 +43,30 @@ def write_entities_and_links(triples, metadata):
         "(SELECT entity_id FROM entity_links)"
     )
 
-    for entity_qid, (name, kind) in metadata.items():
-        conn.execute(
-            "INSERT OR IGNORE INTO entities (qid, name, kind) VALUES (?, ?, ?)",
-            (entity_qid, name, kind),
-        )
+    cols = ("qid", "name", "kind", "description", "inception_year", "country",
+            "industry", "website", "employee_count", "revenue_usd",
+            "wikipedia_url")
+    placeholders = ", ".join("?" * len(cols))
+    update_assignments = ", ".join(f"{c} = excluded.{c}" for c in cols[1:])
+    insert_sql = (
+        f"INSERT INTO entities ({', '.join(cols)}) VALUES ({placeholders}) "
+        f"ON CONFLICT(qid) DO UPDATE SET {update_assignments}"
+    )
+
+    for entity_qid, meta in metadata.items():
+        conn.execute(insert_sql, (
+            entity_qid,
+            meta.get("name"),
+            meta.get("kind"),
+            meta.get("description"),
+            meta.get("inception_year"),
+            meta.get("country"),
+            meta.get("industry"),
+            meta.get("website"),
+            meta.get("employee_count"),
+            meta.get("revenue_usd"),
+            meta.get("wikipedia_url"),
+        ))
 
     qid_to_eid = {
         row["qid"]: row["entity_id"]
@@ -64,6 +88,33 @@ def write_entities_and_links(triples, metadata):
     conn.commit()
     conn.close()
     return entities_added, links_added
+
+
+def write_entity_edges(edges):
+    """Replace prior wikidata-sourced entity_edges with `edges`.
+
+    `edges` is a list of (subject_qid, kind, object_qid). Edges where either
+    endpoint isn't in the entities table are skipped silently."""
+    conn = get_network_db()
+    qid_to_eid = {
+        row["qid"]: row["entity_id"]
+        for row in conn.execute("SELECT entity_id, qid FROM entities").fetchall()
+    }
+    conn.execute("DELETE FROM entity_edges WHERE source = 'wikidata'")
+    written = 0
+    for s_qid, kind, o_qid in edges:
+        a = qid_to_eid.get(s_qid)
+        b = qid_to_eid.get(o_qid)
+        if a and b and a != b:
+            cur = conn.execute(
+                "INSERT OR IGNORE INTO entity_edges "
+                "(entity_a_id, entity_b_id, kind, source) VALUES (?, ?, ?, 'wikidata')",
+                (a, b, kind),
+            )
+            written += cur.rowcount
+    conn.commit()
+    conn.close()
+    return written
 
 
 def write_edges(edges):

@@ -1,5 +1,5 @@
 // static/js/tabs/panel.js
-// Person detail side panel (opens from table or graph clicks).
+// Person + entity detail side panels (opens from table or graph clicks).
 function panelMixin() {
     return {
         panelOpen: false,
@@ -11,6 +11,9 @@ function panelMixin() {
         panelFacts: [],
         panelAssets: { public: [], private: [] },
         panelChart: null,
+
+        entityPanelOpen: false,
+        entityPanel: null,
 
         async openPanel(personId) {
             const [detail, history] = await Promise.all([
@@ -28,6 +31,12 @@ function panelMixin() {
             };
             this.panelOpen = true;
             this.$nextTick(() => this.renderPanelChart());
+        },
+
+        async openEntityPanel(entityId) {
+            const detail = await fetch(`/api/entities/${entityId}`).then(r => r.json());
+            this.entityPanel = detail;
+            this.entityPanelOpen = true;
         },
 
         setPanelRange(range) {
@@ -54,7 +63,15 @@ function panelMixin() {
                 options: {
                     responsive: true,
                     animation: false,
-                    plugins: { legend: { display: false } },
+                    interaction: { mode: 'index', intersect: false },
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            callbacks: {
+                                label: ctx => `${ctx.dataset.label}: ${formatWealth(ctx.parsed.y)}`,
+                            },
+                        },
+                    },
                     scales: { y: { ticks: { callback: v => formatWealth(v) } } },
                 },
             });

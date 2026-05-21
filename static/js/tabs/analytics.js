@@ -67,6 +67,14 @@ function analyticsMixin() {
                 options: {
                     responsive: true,
                     animation: false,
+                    interaction: { mode: 'index', intersect: false },
+                    plugins: {
+                        tooltip: {
+                            callbacks: {
+                                label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(1)}%`,
+                            },
+                        },
+                    },
                     scales: {
                         x: { type: 'category', ticks: { maxTicksLimit: 12 } },
                         y: { ticks: { callback: v => v.toFixed(0) + '%' } },
@@ -144,6 +152,14 @@ function analyticsMixin() {
                 options: {
                     responsive: true,
                     animation: false,
+                    interaction: { mode: 'index', intersect: false },
+                    plugins: {
+                        tooltip: {
+                            callbacks: {
+                                label: ctx => `${ctx.dataset.label}: ${formatWealth(ctx.parsed.y)}`,
+                            },
+                        },
+                    },
                     scales: {
                         x: { type: 'category' },
                         y: { ticks: { callback: v => formatWealth(v) } },

@@ -706,15 +706,67 @@
         </template>
     </aside>
 
+    <div class="panel-overlay" x-show="entityPanelOpen" @click="entityPanelOpen = false" x-transition.opacity></div>
+    <aside class="detail-panel" :class="{ open: entityPanelOpen }">
+        <template x-if="entityPanel">
+            <div class="panel-content">
+                <div class="panel-header">
+                    <div>
+                        <h2 x-text="entityPanel.name"></h2>
+                        <p class="muted" x-text="(entityPanel.kind || 'entity') + (entityPanel.country ? ' · ' + entityPanel.country : '') + (entityPanel.inception_year ? ' · founded ' + entityPanel.inception_year : '')"></p>
+                    </div>
+                    <button class="panel-close" @click="entityPanelOpen = false">&times;</button>
+                </div>
+
+                <p class="panel-summary" x-show="entityPanel.description" x-text="entityPanel.description"></p>
+
+                <div class="panel-section" x-show="entityPanel.industry || entityPanel.employee_count || entityPanel.revenue_usd || entityPanel.website">
+                    <h4>Profile</h4>
+                    <ul>
+                        <template x-if="entityPanel.industry"><li><strong>Industry:</strong> <span x-text="entityPanel.industry"></span></li></template>
+                        <template x-if="entityPanel.employee_count"><li><strong>Employees:</strong> <span x-text="entityPanel.employee_count.toLocaleString()"></span></li></template>
+                        <template x-if="entityPanel.revenue_usd"><li><strong>Revenue:</strong> <span x-text="formatWealth(entityPanel.revenue_usd)"></span></li></template>
+                        <template x-if="entityPanel.website"><li><strong>Website:</strong> <a :href="entityPanel.website" target="_blank" rel="noopener" x-text="entityPanel.website"></a></li></template>
+                        <template x-if="entityPanel.wikipedia_url"><li><strong>Wikipedia:</strong> <a :href="entityPanel.wikipedia_url" target="_blank" rel="noopener">article</a></li></template>
+                    </ul>
+                </div>
+
+                <div class="panel-section" x-show="entityPanel.people && entityPanel.people.length > 0">
+                    <h4>Connected billionaires</h4>
+                    <ul>
+                        <template x-for="p in entityPanel.people" :key="p.person_id">
+                            <li>
+                                <a href="#" @click.prevent="entityPanelOpen = false; openPanel(p.person_id)" x-text="p.name"></a>
+                                <span class="muted" x-text="' · ' + p.role"></span>
+                            </li>
+                        </template>
+                    </ul>
+                </div>
+
+                <div class="panel-section" x-show="entityPanel.related && entityPanel.related.length > 0">
+                    <h4>Related entities</h4>
+                    <ul>
+                        <template x-for="r in entityPanel.related" :key="r.entity_id">
+                            <li>
+                                <a href="#" @click.prevent="openEntityPanel(r.entity_id)" x-text="r.name"></a>
+                                <span class="muted" x-text="' · ' + r.kind + ' · ' + r.entity_kind"></span>
+                            </li>
+                        </template>
+                    </ul>
+                </div>
+            </div>
+        </template>
+    </aside>
+
     <script src="/js/format.js?v=1"></script>
     <script src="/js/charts.js?v=1"></script>
     <script src="/js/tabs/dashboard.js?v=1"></script>
     <script src="/js/tabs/table.js?v=1"></script>
-    <script src="/js/tabs/analytics.js?v=1"></script>
-    <script src="/js/tabs/families.js?v=1"></script>
+    <script src="/js/tabs/analytics.js?v=2"></script>
+    <script src="/js/tabs/families.js?v=2"></script>
     <script src="/js/tabs/scraper.js?v=1"></script>
     <script src="/js/tabs/export.js?v=1"></script>
-    <script src="/js/tabs/panel.js?v=1"></script>
-    <script src="/app.js?v=25"></script>
+    <script src="/js/tabs/panel.js?v=3"></script>
+    <script src="/app.js?v=26"></script>
 </body>
 </html>

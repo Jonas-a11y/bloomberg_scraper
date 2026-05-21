@@ -4,9 +4,15 @@ from datetime import datetime
 
 from app.database import get_network_db
 
-from .bridges import filter_bridges, write_edges, write_entities_and_links
+from .bridges import filter_bridges, write_edges, write_entities_and_links, write_entity_edges
 from .resolver import resolve_persons
-from .wikidata import fetch_entity_metadata, fetch_entity_relations, fetch_relations
+from .wikidata import (
+    fetch_entity_edges,
+    fetch_entity_metadata,
+    fetch_entity_relations,
+    fetch_position_relations,
+    fetch_relations,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +26,7 @@ _state = {
     "edges_added": 0,
     "entities_added": 0,
     "entity_links_added": 0,
+    "entity_edges_added": 0,
     "started_at": None,
     "finished_at": None,
     "message": None,
@@ -43,6 +50,7 @@ def run_refresh():
         "done": 0, "total": 0, "errors": 0,
         "qids_resolved": 0, "edges_added": 0,
         "entities_added": 0, "entity_links_added": 0,
+        "entity_edges_added": 0,
         "started_at": datetime.now().isoformat(),
         "finished_at": None,
         "message": "Resolving Wikidata QIDs…",
@@ -66,6 +74,8 @@ def run_refresh():
         _state["stage"] = "entities"
         _state["message"] = "Fetching shared employers / schools / boards…"
         triples = fetch_entity_relations(qids, state=_state)
+        position_triples = fetch_position_relations(qids, state=_state)
+        triples.extend(position_triples)
         bridge_triples, bridge_qids = filter_bridges(triples, min_links=2)
 
         _state["stage"] = "labels"
@@ -75,9 +85,16 @@ def run_refresh():
         ents, links = write_entities_and_links(bridge_triples, metadata)
         _state["entities_added"] = ents
         _state["entity_links_added"] = links
+
+        _state["stage"] = "entity_edges"
+        _state["message"] = f"Fetching relations between {len(bridge_qids)} entities…"
+        ent_edges = fetch_entity_edges(bridge_qids, state=_state)
+        _state["entity_edges_added"] = write_entity_edges(ent_edges)
+
         _state["message"] = (
             f"Done — {_state['edges_added']} family edges, "
-            f"{ents} bridging entities, {links} entity links "
+            f"{ents} bridging entities, {links} entity links, "
+            f"{_state['entity_edges_added']} entity↔entity edges "
             f"across {len(qids)} resolved persons"
         )
     except Exception as e:

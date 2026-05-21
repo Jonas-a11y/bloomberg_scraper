@@ -12,21 +12,26 @@ Edges are written only when both endpoints map to a person we know about
 (family) or to a bridging entity (entity_links), so false-positive QIDs from
 the disambiguation step naturally drop out.
 """
-from .bridges import filter_bridges, write_edges, write_entities_and_links
+from .bridges import (
+    filter_bridges, write_edges, write_entities_and_links, write_entity_edges,
+)
 from .constants import (
     BUSINESS_HINTS,
     ENTITY_KIND_BY_INSTANCE,
     ENTITY_PROPS_FORWARD,
     ENTITY_PROPS_INVERSE,
+    ENTITY_TO_ENTITY_PROPS,
     RELATION_PROPS,
     REVERSE_ROLE,
 )
-from .queries import find_path, get_graph
+from .queries import find_path, get_entity_detail, get_graph
 from .refresh import get_state, is_running, run_refresh
 from .resolver import looks_like_billionaire, resolve_persons, resolve_qid, sync_persons_index
 from .wikidata import (
+    fetch_entity_edges,
     fetch_entity_metadata,
     fetch_entity_relations,
+    fetch_position_relations,
     fetch_relations,
     search_candidates,
 )
@@ -34,17 +39,19 @@ from .wikidata import (
 __all__ = [
     # constants
     "RELATION_PROPS", "ENTITY_PROPS_FORWARD", "ENTITY_PROPS_INVERSE",
+    "ENTITY_TO_ENTITY_PROPS",
     "REVERSE_ROLE", "ENTITY_KIND_BY_INSTANCE", "BUSINESS_HINTS",
     # wikidata
     "search_candidates", "fetch_relations", "fetch_entity_relations",
-    "fetch_entity_metadata",
+    "fetch_entity_metadata", "fetch_entity_edges", "fetch_position_relations",
     # resolver
     "looks_like_billionaire", "resolve_qid", "resolve_persons",
     "sync_persons_index",
     # bridges
     "filter_bridges", "write_edges", "write_entities_and_links",
+    "write_entity_edges",
     # refresh
     "get_state", "is_running", "run_refresh",
     # queries
-    "get_graph", "find_path",
+    "get_graph", "find_path", "get_entity_detail",
 ]

@@ -119,6 +119,7 @@ function familiesMixin() {
             const familyEdges = g.edges || [];
             const entities = g.entities || [];
             const entityLinks = g.entity_links || [];
+            const entityEdges = g.entity_edges || [];
             if (familyEdges.length === 0 && entityLinks.length === 0) return;
 
             const connectedPersons = new Set();
@@ -130,6 +131,13 @@ function familiesMixin() {
                 : personNodes;
 
             const usedEntityIds = new Set(entityLinks.map(l => l.entity_id));
+            // Also keep entities that participate in entity↔entity edges where the
+            // other endpoint is already visible (so company-of-company chains show).
+            for (const ee of entityEdges) {
+                if (usedEntityIds.has(ee.source) || usedEntityIds.has(ee.target)) {
+                    usedEntityIds.add(ee.source); usedEntityIds.add(ee.target);
+                }
+            }
             const visibleEntities = entities.filter(e => usedEntityIds.has(e.id));
 
             const maxWorth = Math.max(...visiblePersons.map(n => n.net_worth_usd || 0), 1);
@@ -152,16 +160,19 @@ function familiesMixin() {
             const entityVis = visibleEntities.map(e => {
                 const nodeId = `e${e.id}`;
                 const isHighlighted = highlight.has(nodeId);
+                const titleLines = [`${e.name} (${e.kind})`];
+                if (e.description) titleLines.push(e.description);
+                if (e.country) titleLines.push(e.country);
                 return {
                     id: nodeId,
                     label: e.name,
-                    title: `${e.name} (${e.kind})`,
+                    title: titleLines.join('\n'),
                     value: 12,
                     shape: 'square',
                     color: isHighlighted ? '#ff6b6b' : (FAMILIES_ENTITY_COLOR[e.kind] || '#95a5a6'),
                     borderWidth: isHighlighted ? 3 : 0,
                     font: { size: 10, color: '#555' },
-                    _kind: 'entity',
+                    _kind: 'entity', _entityId: e.id,
                 };
             });
 
@@ -172,15 +183,23 @@ function familiesMixin() {
                 width: e.kind === 'spouse' ? 2 : 1,
                 arrows: (e.kind === 'child' || e.kind === 'father' || e.kind === 'mother') ? 'to' : undefined,
             }));
-            const entityEdgeVis = entityLinks.map(l => ({
+            const entityLinkVis = entityLinks.map(l => ({
                 from: `p${l.person_id}`, to: `e${l.entity_id}`,
                 color: { color: '#bbb', opacity: 0.5 },
                 title: l.role, dashes: true, width: 1,
             }));
+            // Render entity↔entity edges only when both endpoints are visible.
+            const entityEdgeVis = entityEdges
+                .filter(ee => usedEntityIds.has(ee.source) && usedEntityIds.has(ee.target))
+                .map(ee => ({
+                    from: `e${ee.source}`, to: `e${ee.target}`,
+                    color: { color: '#888', opacity: 0.55 },
+                    title: ee.kind, dashes: [4, 4], width: 1, arrows: 'to',
+                }));
 
             const data = {
                 nodes: new vis.DataSet([...personVis, ...entityVis]),
-                edges: new vis.DataSet([...familyEdgeVis, ...entityEdgeVis]),
+                edges: new vis.DataSet([...familyEdgeVis, ...entityLinkVis, ...entityEdgeVis]),
             };
             const options = {
                 nodes: { shape: 'dot', font: { size: 11, color: '#1a1a2e' }, borderWidth: 0, scaling: { min: 8, max: 38 } },
@@ -198,8 +217,11 @@ function familiesMixin() {
             this.familiesNetwork.on('click', params => {
                 if (params.nodes.length === 0) return;
                 const nodeId = params.nodes[0];
-                if (typeof nodeId === 'string' && nodeId.startsWith('p')) {
+                if (typeof nodeId !== 'string') return;
+                if (nodeId.startsWith('p')) {
                     this.openPanel(parseInt(nodeId.slice(1), 10));
+                } else if (nodeId.startsWith('e')) {
+                    this.openEntityPanel(parseInt(nodeId.slice(1), 10));
                 }
             });
         },

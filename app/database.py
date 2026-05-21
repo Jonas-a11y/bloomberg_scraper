@@ -117,10 +117,18 @@ CREATE TABLE IF NOT EXISTS family_edges (
 CREATE INDEX IF NOT EXISTS idx_family_edges_related ON family_edges(related_id);
 
 CREATE TABLE IF NOT EXISTS entities (
-    entity_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    qid       TEXT NOT NULL UNIQUE,
-    name      TEXT,
-    kind      TEXT
+    entity_id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    qid            TEXT NOT NULL UNIQUE,
+    name           TEXT,
+    kind           TEXT,
+    description    TEXT,
+    inception_year INTEGER,
+    country        TEXT,
+    industry       TEXT,
+    website        TEXT,
+    employee_count INTEGER,
+    revenue_usd    INTEGER,
+    wikipedia_url  TEXT
 );
 
 CREATE TABLE IF NOT EXISTS entity_links (
@@ -132,6 +140,18 @@ CREATE TABLE IF NOT EXISTS entity_links (
 );
 
 CREATE INDEX IF NOT EXISTS idx_entity_links_entity ON entity_links(entity_id);
+
+CREATE TABLE IF NOT EXISTS entity_edges (
+    entity_a_id INTEGER NOT NULL,
+    entity_b_id INTEGER NOT NULL,
+    kind        TEXT NOT NULL,
+    source      TEXT NOT NULL DEFAULT 'wikidata',
+    PRIMARY KEY (entity_a_id, entity_b_id, kind),
+    FOREIGN KEY (entity_a_id) REFERENCES entities(entity_id),
+    FOREIGN KEY (entity_b_id) REFERENCES entities(entity_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_entity_edges_b ON entity_edges(entity_b_id);
 """
 
 PERSON_COLUMNS = [
@@ -186,9 +206,29 @@ def init_db(db_path=None, network_db_path=None):
     Path(npath).parent.mkdir(parents=True, exist_ok=True)
     nconn = sqlite3.connect(npath)
     nconn.executescript(NETWORK_SCHEMA)
+    _migrate_entities_columns(nconn)
     nconn.close()
 
     _migrate_network_data_out_of_main(path, npath)
+
+
+def _migrate_entities_columns(conn):
+    """Idempotent: ALTER TABLE entities for the metadata columns added later."""
+    existing = {r[1] for r in conn.execute("PRAGMA table_info(entities)").fetchall()}
+    additions = [
+        ("description", "TEXT"),
+        ("inception_year", "INTEGER"),
+        ("country", "TEXT"),
+        ("industry", "TEXT"),
+        ("website", "TEXT"),
+        ("employee_count", "INTEGER"),
+        ("revenue_usd", "INTEGER"),
+        ("wikipedia_url", "TEXT"),
+    ]
+    for col, sql_type in additions:
+        if col not in existing:
+            conn.execute(f"ALTER TABLE entities ADD COLUMN {col} {sql_type}")
+    conn.commit()
 
 
 def _migrate_legacy_table(conn):

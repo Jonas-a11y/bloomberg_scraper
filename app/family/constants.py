@@ -20,7 +20,6 @@ ENTITY_PROPS_FORWARD = {
     "P463": "member_of",
     "P3320": "board_member",
     "P800": "notable_work",
-    "P39": "position_held",
     "P166": "award",
     "P102": "political_party",
     "P551": "residence",
@@ -51,6 +50,22 @@ REVERSE_ROLE = {
     "position_held": "held_by", "award": "awarded_to",
     "political_party": "has_member", "residence": "resident",
     "owner_of": "owned_by", "participant_in": "had_participant",
+    # entity↔entity
+    "subsidiary_of": "has_subsidiary", "has_subsidiary": "subsidiary_of",
+    "owned_by": "owns", "owns": "owned_by",
+    "part_of": "has_part", "has_part": "part_of",
+    "affiliated_with": "affiliated_with",
+}
+
+# entity ↔ entity (forward; the subject is the "from" side in our edges)
+ENTITY_TO_ENTITY_PROPS = {
+    "P749": "subsidiary_of",   # entity -> parent
+    "P355": "has_subsidiary",  # entity -> child (we'll flip on store)
+    "P127": "owned_by",        # entity -> owner entity
+    "P1830": "owns",           # entity -> owned entity (rare for orgs)
+    "P463": "member_of",       # entity -> larger org
+    "P361": "part_of",         # entity -> larger entity
+    "P1416": "affiliated_with",
 }
 
 # Wikidata entity types we recognize for visual grouping.

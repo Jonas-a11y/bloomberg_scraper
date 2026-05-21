@@ -31,3 +31,11 @@ def path(from_id: int = Query(..., alias="from"), to_id: int = Query(..., alias=
     if chain is None:
         raise HTTPException(status_code=404, detail="No path found in current graph")
     return {"chain": chain, "length": max(len(chain) - 1, 0)}
+
+
+@router.get("/entities/{entity_id}")
+def entity_detail(entity_id: int):
+    detail = family.get_entity_detail(entity_id)
+    if detail is None:
+        raise HTTPException(status_code=404, detail="Entity not found")
+    return detail
