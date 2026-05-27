@@ -2,7 +2,7 @@
 import json
 import logging
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from apscheduler.schedulers.background import BackgroundScheduler
 
@@ -14,6 +14,12 @@ logger = logging.getLogger(__name__)
 scheduler = BackgroundScheduler()
 _is_running = False
 _backfill_state = {"running": False, "done": 0, "total": 0, "errors": 0, "started_at": None, "finished_at": None}
+
+# Bloomberg occasionally rate-limits or 5xx's the scrape; rather than wait for
+# the next scheduled run (could be 24h away), automatically retry with growing
+# backoff. Three attempts total — if all three fail, something is structurally
+# broken and another retry just hammers their endpoint.
+SCRAPE_RETRY_DELAYS_SEC = [600, 1800]  # 10 min after first failure, 30 min after second
 
 
 def get_schedule_config():
@@ -35,7 +41,7 @@ def save_schedule_config(times, timezone, enabled):
     conn.close()
 
 
-def run_scrape():
+def run_scrape(attempt=1):
     global _is_running
     if _is_running:
         return
@@ -64,14 +70,37 @@ def run_scrape():
         logger.info(f"Scrape complete: {len(rows)} records in {duration_ms}ms")
     except Exception as e:
         duration_ms = int((time.time() - start) * 1000)
+        next_attempt = attempt + 1
+        delay_idx = attempt - 1
+        retrying = delay_idx < len(SCRAPE_RETRY_DELAYS_SEC)
+        status = "retrying" if retrying else "failed"
+        error_text = f"attempt {attempt}: {e}"
         conn = get_db()
         conn.execute(
-            "UPDATE scrape_runs SET finished_at = ?, status = 'failed', duration_ms = ?, error = ? WHERE id = ?",
-            (datetime.now().isoformat(), duration_ms, str(e), run_id),
+            "UPDATE scrape_runs SET finished_at = ?, status = ?, duration_ms = ?, error = ? WHERE id = ?",
+            (datetime.now().isoformat(), status, duration_ms, error_text, run_id),
         )
         conn.commit()
         conn.close()
-        logger.error(f"Scrape failed: {e}")
+        if retrying:
+            delay = SCRAPE_RETRY_DELAYS_SEC[delay_idx]
+            run_at = datetime.now() + timedelta(seconds=delay)
+            # Use a unique job id per attempt so a queued retry can't collide
+            # with a later manual trigger reusing the same id.
+            scheduler.add_job(
+                run_scrape,
+                "date",
+                run_date=run_at,
+                args=[next_attempt],
+                id=f"scrape_retry_{run_id}_{next_attempt}",
+                replace_existing=True,
+            )
+            logger.warning(
+                f"Scrape failed (attempt {attempt}): {e}. "
+                f"Retrying in {delay // 60} min (attempt {next_attempt})."
+            )
+            return
+        logger.error(f"Scrape failed (attempt {attempt}, no more retries): {e}")
     finally:
         _is_running = False
 

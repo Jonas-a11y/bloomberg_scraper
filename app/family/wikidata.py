@@ -183,6 +183,74 @@ def fetch_position_relations(qids, state=None, chunk=80, timeout=60):
     return triples
 
 
+def fetch_series_parents(entity_qids, state=None, chunk=120, timeout=45):
+    """Return {qid: series_qid} for entities whose Wikidata page declares
+    P179 ("part of the series"). Used to collapse year-by-year instances
+    (e.g. award editions, conference years) into one canonical bridge so
+    the graph isn't fragmented across editions.
+
+    P179 is the only signal: it's explicit and unambiguous. P31 ("instance
+    of") was tried as a fallback but couldn't reliably distinguish
+    "year edition of an event" from "instance of a generic class" without
+    per-parent subclass probing — Stanford collapsed to "private research
+    university" and Wharton/HBS to "business school". Some series in
+    Wikidata don't set P179 (e.g. the WEF Annual Meeting yearlies as of
+    this writing), so those will remain fragmented in the graph.
+
+    Entities without a P179 statement are absent from the result."""
+    out = {}
+    qid_list = list(entity_qids)
+    for i in range(0, len(qid_list), chunk):
+        batch = qid_list[i:i + chunk]
+        values = " ".join(f"wd:{q}" for q in batch)
+        query = f"""
+        SELECT ?s ?series WHERE {{
+            VALUES ?s {{ {values} }}
+            ?s wdt:P179 ?series .
+        }}
+        """
+        for b in sparql(query, state=state, timeout=timeout):
+            s = b["s"]["value"].rsplit("/", 1)[-1]
+            series = b["series"]["value"].rsplit("/", 1)[-1]
+            if series.startswith("Q") and series != s and s not in out:
+                out[s] = series
+    return out
+
+
+def fetch_award_relations(qids, state=None, chunk=80, timeout=60):
+    """Pull P166 (award received) statements with the P1027 "conferred by"
+    qualifier so each row links a person to the conferring institution via
+    an award-typed role. Awards without a conferring qualifier (most generic
+    "honorary doctorate", "Knight Bachelor" etc.) are dropped — bridging
+    billionaires through an award class is not signal.
+
+    Returns list of (person_qid, award_label, conferred_by_qid)."""
+    triples = []
+    qid_list = list(qids)
+    for i in range(0, len(qid_list), chunk):
+        batch = qid_list[i:i + chunk]
+        values = " ".join(f"wd:{q}" for q in batch)
+        query = f"""
+        SELECT ?s ?award ?awardLabel ?by WHERE {{
+            VALUES ?s {{ {values} }}
+            ?s p:P166 ?stmt .
+            ?stmt ps:P166 ?award .
+            ?stmt pq:P1027 ?by .
+            SERVICE wikibase:label {{ bd:serviceParam wikibase:language "en" . }}
+        }}
+        """
+        for b in sparql(query, state=state, timeout=timeout):
+            person_qid = b["s"]["value"].rsplit("/", 1)[-1]
+            by = b.get("by", {}).get("value")
+            if not by:
+                continue
+            by_qid = by.rsplit("/", 1)[-1]
+            role = b.get("awardLabel", {}).get("value") or "award"
+            if by_qid.startswith("Q") and person_qid != by_qid:
+                triples.append((person_qid, role, by_qid))
+    return triples
+
+
 def fetch_entity_metadata(entity_qids, state=None, chunk=60, timeout=60):
     """Return {qid: dict} where dict has name, kind, description, inception_year,
     country, industry, website, employee_count, revenue_usd, wikipedia_url.
@@ -298,4 +366,49 @@ def fetch_entity_edges(entity_qids, state=None, chunk=80, timeout=60):
             kind = ENTITY_TO_ENTITY_PROPS.get(p)
             if kind and o in kept and s != o:
                 edges.append((s, kind, o))
+    return edges
+
+
+def fetch_neighbor_edges(entity_qids, state=None, chunk=80, timeout=60):
+    """Return list of (subject_qid, kind, object_qid) for edges where AT LEAST
+    ONE endpoint is in `entity_qids`. Used to discover second-tier bridges:
+    entities that aren't person-bridges themselves but link two or more
+    first-tier bridges (e.g. a holding company with multiple subsidiaries
+    in our graph).
+
+    Runs both forward (VALUES ?s) and inverse (VALUES ?o) so an edge gets
+    captured even if only the *other* endpoint is a first-tier bridge."""
+    seeds = set(entity_qids)
+    if not seeds:
+        return []
+    edges = []
+    qid_list = list(seeds)
+    props_clause = " ".join(f"wdt:{p}" for p in ENTITY_TO_ENTITY_PROPS)
+
+    def _collect(query):
+        for b in sparql(query, state=state, timeout=timeout):
+            s = b["s"]["value"].rsplit("/", 1)[-1]
+            p = b["p"]["value"].rsplit("/", 1)[-1]
+            o = b["o"]["value"].rsplit("/", 1)[-1]
+            kind = ENTITY_TO_ENTITY_PROPS.get(p)
+            if kind and s.startswith("Q") and o.startswith("Q") and s != o:
+                edges.append((s, kind, o))
+
+    for i in range(0, len(qid_list), chunk):
+        batch = qid_list[i:i + chunk]
+        values = " ".join(f"wd:{q}" for q in batch)
+        _collect(f"""
+        SELECT ?s ?p ?o WHERE {{
+            VALUES ?s {{ {values} }}
+            VALUES ?p {{ {props_clause} }}
+            ?s ?p ?o .
+        }}
+        """)
+        _collect(f"""
+        SELECT ?s ?p ?o WHERE {{
+            VALUES ?o {{ {values} }}
+            VALUES ?p {{ {props_clause} }}
+            ?s ?p ?o .
+        }}
+        """)
     return edges

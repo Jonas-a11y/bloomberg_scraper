@@ -241,6 +241,24 @@ h3 { font-size: 15px; margin-bottom: 12px; }
     background: white; padding: 12px 16px; border-radius: 8px;
     border: 1px solid #e0e0e0; margin-bottom: 16px; font-size: 13px;
 }
+.refresh-progress {
+    margin-top: 10px; height: 6px; background: #eef0f4;
+    border-radius: 3px; overflow: hidden;
+}
+.refresh-progress-bar {
+    height: 100%; background: linear-gradient(90deg, #6c5ce7, #4ecdc4);
+    transition: width 0.4s ease;
+}
+.refresh-stages {
+    display: flex; flex-wrap: wrap; gap: 6px 14px;
+    margin-top: 8px; font-size: 11px;
+}
+.refresh-stage { color: #999; }
+.refresh-stage.stage-done { color: #4ecdc4; }
+.refresh-stage.stage-active { color: #1a1a2e; font-weight: 600; }
+.refresh-stage.stage-active::after {
+    content: '…'; margin-left: 2px;
+}
 
 .family-graph {
     background: white; border: 1px solid #e0e0e0; border-radius: 8px;
@@ -278,3 +296,31 @@ h3 { font-size: 15px; margin-bottom: 12px; }
 .path-arrow { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 11px; }
 .path-person { font-weight: 600; color: #1a1a2e; }
 .path-entity { color: #555; font-style: italic; }
+
+.metrics-card {
+    background: white; padding: 14px 18px; border-radius: 8px;
+    border: 1px solid #e0e0e0; margin-bottom: 12px;
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 18px; font-size: 13px;
+}
+.metrics-card h4 { margin: 0 0 6px 0; font-size: 12px; color: #666; text-transform: uppercase; letter-spacing: 0.04em; }
+.metrics-card ol { margin: 0; padding-left: 20px; }
+.metrics-card li { margin-bottom: 2px; line-height: 1.5; }
+.metrics-card .metric-link { cursor: pointer; color: #1a1a2e; }
+.metrics-card .metric-link:hover { color: #0984e3; text-decoration: underline; }
+.metrics-card .metric-count { color: #888; font-size: 11px; margin-left: 4px; }
+
+.compare-result {
+    background: #fafbff; border: 1px solid #e0e6ff; border-radius: 8px;
+    padding: 14px 18px; margin-bottom: 12px; font-size: 13px;
+}
+.compare-result h4 { margin: 0 0 6px 0; font-size: 12px; color: #666; text-transform: uppercase; letter-spacing: 0.04em; }
+.compare-result section { margin-bottom: 12px; }
+.compare-result section:last-child { margin-bottom: 0; }
+.compare-result ul { margin: 0; padding-left: 18px; }
+.compare-result li { margin-bottom: 3px; line-height: 1.5; }
+.compare-result .role-pill {
+    display: inline-block; background: #eef; color: #335; border-radius: 10px;
+    padding: 1px 8px; font-size: 11px; margin: 0 2px;
+}
+.compare-result .compare-empty { color: #999; font-style: italic; }

@@ -21,3 +21,6 @@ tests/test_export_fields.py
 tests/test_format_js.py
 tests/conftest_refactor.py
 tests/test_entity_enrichment.py
+
+# Local verification screenshots
+verify-*.png

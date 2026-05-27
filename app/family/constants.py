@@ -14,15 +14,20 @@ RELATION_PROPS = {
 }
 
 # person -> entity (forward)
+# Note: P166 (award) and P39 (position_held) are not listed here — both attach
+# meaningful structure to a generic class node ("honorary doctorate", "board
+# member"), so we instead pull them statement-level via fetch_award_relations
+# and fetch_position_relations and re-target at the conferring/affiliated org.
+# P551 (residence) is also omitted: bridging billionaires through "lives in
+# San Francisco" was noise, not signal.
 ENTITY_PROPS_FORWARD = {
     "P108": "employer",
     "P69": "educated_at",
     "P463": "member_of",
     "P3320": "board_member",
     "P800": "notable_work",
-    "P166": "award",
     "P102": "political_party",
-    "P551": "residence",
+    "P1416": "affiliated_with",
     "P1830": "owner_of",
     "P1344": "participant_in",
 }
@@ -47,8 +52,8 @@ REVERSE_ROLE = {
     "member_of": "includes", "board_member": "board_of",
     "notable_work": "created_by",
     "founded": "founded_by", "chair": "chaired_by",
-    "position_held": "held_by", "award": "awarded_to",
-    "political_party": "has_member", "residence": "resident",
+    "position_held": "held_by",
+    "political_party": "has_member",
     "owner_of": "owned_by", "participant_in": "had_participant",
     # entity↔entity
     "subsidiary_of": "has_subsidiary", "has_subsidiary": "subsidiary_of",

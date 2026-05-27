@@ -219,3 +219,201 @@ def find_path(src_id, dst_id):
     if chain:
         chain[0]["role"] = None  # first node has no incoming role
     return chain
+
+
+def get_metrics(top_n=5):
+    """Snapshot of who/what is most connected in the current graph.
+
+    Returns:
+      - top_people: highest total degree (distinct family neighbors + entity_links).
+      - top_entities: highest bridge degree (distinct persons linked).
+      - largest_family: size + member names of the biggest connected component
+        when traversing family edges only (entity bridges excluded — clusters
+        through "Harvard" or "Goldman Sachs" aren't actual families).
+    """
+    main = get_db()
+    main.execute("ATTACH DATABASE ? AS net", (str(database.NETWORK_DB_PATH),))
+
+    family_pairs = main.execute(
+        "SELECT person_id, related_id FROM net.family_edges"
+    ).fetchall()
+    entity_link_rows = main.execute(
+        "SELECT person_id, entity_id FROM net.entity_links"
+    ).fetchall()
+    persons = {
+        row["person_id"]: row["common_name"]
+        for row in main.execute(
+            "SELECT person_id, common_name FROM persons"
+        ).fetchall()
+    }
+
+    family_neighbors = {}
+    for row in family_pairs:
+        family_neighbors.setdefault(row["person_id"], set()).add(row["related_id"])
+        family_neighbors.setdefault(row["related_id"], set()).add(row["person_id"])
+    entity_count = {}
+    for row in entity_link_rows:
+        entity_count[row["person_id"]] = entity_count.get(row["person_id"], 0) + 1
+
+    person_ids = set(family_neighbors) | set(entity_count)
+    scored = []
+    for pid in person_ids:
+        fam = len(family_neighbors.get(pid, ()))
+        ent = entity_count.get(pid, 0)
+        scored.append({
+            "person_id": pid,
+            "name": persons.get(pid, "?"),
+            "family_degree": fam,
+            "entity_degree": ent,
+            "total_degree": fam + ent,
+        })
+    scored.sort(key=lambda r: (-r["total_degree"], r["name"]))
+    top_people = scored[:top_n]
+
+    top_entities = [
+        dict(row) for row in main.execute("""
+            SELECT e.entity_id AS id, e.name, e.kind,
+                   COUNT(DISTINCT l.person_id) AS person_count
+            FROM net.entities e
+            JOIN net.entity_links l ON l.entity_id = e.entity_id
+            GROUP BY e.entity_id
+            ORDER BY person_count DESC, e.name
+            LIMIT ?
+        """, (top_n,)).fetchall()
+    ]
+
+    # Largest family-only connected component via BFS.
+    visited = set()
+    largest = []
+    for seed in family_neighbors:
+        if seed in visited:
+            continue
+        component = []
+        queue = deque([seed])
+        visited.add(seed)
+        while queue:
+            node = queue.popleft()
+            component.append(node)
+            for nbr in family_neighbors.get(node, ()):
+                if nbr not in visited:
+                    visited.add(nbr)
+                    queue.append(nbr)
+        if len(component) > len(largest):
+            largest = component
+    largest_family = {
+        "size": len(largest),
+        "members": sorted(
+            [{"person_id": pid, "name": persons.get(pid, "?")} for pid in largest],
+            key=lambda r: r["name"],
+        ),
+    }
+
+    main.execute("DETACH DATABASE net")
+    main.close()
+    return {
+        "top_people": top_people,
+        "top_entities": top_entities,
+        "largest_family": largest_family,
+    }
+
+
+def compare_persons(a_id, b_id):
+    """All direct connections between two people: family ties, shared entities,
+    mutual family neighbors, plus the shortest path through the full graph."""
+    if a_id == b_id:
+        return None
+    main = get_db()
+    a_row = main.execute(
+        "SELECT person_id, common_name FROM persons WHERE person_id = ?", (a_id,)
+    ).fetchone()
+    b_row = main.execute(
+        "SELECT person_id, common_name FROM persons WHERE person_id = ?", (b_id,)
+    ).fetchone()
+    if not a_row or not b_row:
+        main.close()
+        return None
+    persons = {
+        row["person_id"]: row["common_name"]
+        for row in main.execute("SELECT person_id, common_name FROM persons").fetchall()
+    }
+    main.close()
+
+    net = get_network_db()
+    family_rows = net.execute(
+        "SELECT person_id, related_id, kind FROM family_edges "
+        "WHERE (person_id = ? AND related_id = ?) OR (person_id = ? AND related_id = ?)",
+        (a_id, b_id, b_id, a_id),
+    ).fetchall()
+    direct_family = []
+    for r in family_rows:
+        if r["person_id"] == a_id:
+            direct_family.append({"kind": r["kind"], "direction": "a_to_b"})
+        else:
+            direct_family.append({
+                "kind": REVERSE_ROLE.get(r["kind"], r["kind"]),
+                "direction": "a_to_b",
+            })
+
+    a_links = net.execute(
+        "SELECT entity_id, role FROM entity_links WHERE person_id = ?", (a_id,)
+    ).fetchall()
+    b_links = net.execute(
+        "SELECT entity_id, role FROM entity_links WHERE person_id = ?", (b_id,)
+    ).fetchall()
+    a_by_eid = {}
+    for r in a_links:
+        a_by_eid.setdefault(r["entity_id"], []).append(r["role"])
+    b_by_eid = {}
+    for r in b_links:
+        b_by_eid.setdefault(r["entity_id"], []).append(r["role"])
+    shared_eids = set(a_by_eid) & set(b_by_eid)
+    shared_entities = []
+    if shared_eids:
+        placeholders = ",".join("?" * len(shared_eids))
+        ent_rows = net.execute(
+            f"SELECT entity_id, name, kind FROM entities WHERE entity_id IN ({placeholders})",
+            list(shared_eids),
+        ).fetchall()
+        for er in ent_rows:
+            shared_entities.append({
+                "entity_id": er["entity_id"],
+                "name": er["name"],
+                "entity_kind": er["kind"],
+                "roles_a": a_by_eid[er["entity_id"]],
+                "roles_b": b_by_eid[er["entity_id"]],
+            })
+        shared_entities.sort(key=lambda r: r["name"] or "")
+
+    fam_a = net.execute(
+        "SELECT person_id, related_id FROM family_edges "
+        "WHERE person_id = ? OR related_id = ?", (a_id, a_id),
+    ).fetchall()
+    fam_b = net.execute(
+        "SELECT person_id, related_id FROM family_edges "
+        "WHERE person_id = ? OR related_id = ?", (b_id, b_id),
+    ).fetchall()
+    net.close()
+    a_neighbors = {
+        (r["related_id"] if r["person_id"] == a_id else r["person_id"])
+        for r in fam_a
+    } - {a_id, b_id}
+    b_neighbors = {
+        (r["related_id"] if r["person_id"] == b_id else r["person_id"])
+        for r in fam_b
+    } - {a_id, b_id}
+    mutual_people = sorted(
+        [{"person_id": pid, "name": persons.get(pid, "?")} for pid in a_neighbors & b_neighbors],
+        key=lambda r: r["name"],
+    )
+
+    chain = find_path(a_id, b_id)
+
+    return {
+        "a": {"person_id": a_row["person_id"], "name": a_row["common_name"]},
+        "b": {"person_id": b_row["person_id"], "name": b_row["common_name"]},
+        "direct_family": direct_family,
+        "shared_entities": shared_entities,
+        "mutual_people": mutual_people,
+        "path": chain,
+        "path_length": (max(len(chain) - 1, 0) if chain else None),
+    }

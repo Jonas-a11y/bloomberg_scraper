@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Bloomberg Scraper</title>
-    <link rel="stylesheet" href="/style.css?v=19">
+    <link rel="stylesheet" href="/style.css?v=21">
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
     <script src="https://cdn.jsdelivr.net/npm/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
@@ -339,7 +339,9 @@
 
             <button class="btn-sm" @click="findPath()"
                     :disabled="!pathFromPerson || !pathToPerson || pathFromPerson.person_id === pathToPerson.person_id">Find path</button>
-            <button class="btn-sm" @click="clearPath()" x-show="pathChain.length > 0 || pathMessage">Clear</button>
+            <button class="btn-sm" @click="comparePath()"
+                    :disabled="!pathFromPerson || !pathToPerson || pathFromPerson.person_id === pathToPerson.person_id">Compare</button>
+            <button class="btn-sm" @click="clearPath()" x-show="pathChain.length > 0 || pathMessage || compareResult">Clear</button>
             <span class="muted" x-show="pathMessage" x-text="pathMessage"></span>
         </div>
 
@@ -352,11 +354,122 @@
             </template>
         </div>
 
+        <div class="compare-result" x-show="compareResult">
+            <template x-if="compareResult">
+                <div>
+                    <h4>
+                        <span x-text="compareResult.a.name"></span>
+                        ↔
+                        <span x-text="compareResult.b.name"></span>
+                    </h4>
+
+                    <section>
+                        <strong>Direct family ties</strong>
+                        <ul x-show="compareResult.direct_family.length > 0">
+                            <template x-for="(t, i) in compareResult.direct_family" :key="i">
+                                <li><span class="role-pill" x-text="t.kind"></span></li>
+                            </template>
+                        </ul>
+                        <div class="compare-empty" x-show="compareResult.direct_family.length === 0">none</div>
+                    </section>
+
+                    <section>
+                        <strong>Shared entities <span class="muted" x-text="'(' + compareResult.shared_entities.length + ')'"></span></strong>
+                        <ul x-show="compareResult.shared_entities.length > 0">
+                            <template x-for="e in compareResult.shared_entities" :key="e.entity_id">
+                                <li>
+                                    <span class="metric-link" @click="openEntityPanel(e.entity_id)" x-text="e.name"></span>
+                                    <span class="muted" x-text="'(' + e.entity_kind + ')'"></span>
+                                    —
+                                    <template x-for="r in e.roles_a" :key="'a-' + r"><span class="role-pill" x-text="r"></span></template>
+                                    /
+                                    <template x-for="r in e.roles_b" :key="'b-' + r"><span class="role-pill" x-text="r"></span></template>
+                                </li>
+                            </template>
+                        </ul>
+                        <div class="compare-empty" x-show="compareResult.shared_entities.length === 0">none</div>
+                    </section>
+
+                    <section>
+                        <strong>Mutual family relatives <span class="muted" x-text="'(' + compareResult.mutual_people.length + ')'"></span></strong>
+                        <ul x-show="compareResult.mutual_people.length > 0">
+                            <template x-for="p in compareResult.mutual_people" :key="p.person_id">
+                                <li><span class="metric-link" @click="openPanel(p.person_id)" x-text="p.name"></span></li>
+                            </template>
+                        </ul>
+                        <div class="compare-empty" x-show="compareResult.mutual_people.length === 0">none</div>
+                    </section>
+
+                    <section>
+                        <strong>Shortest path</strong>
+                        <span class="muted" x-show="compareResult.path_length !== null"
+                              x-text="'(' + compareResult.path_length + ' hop' + (compareResult.path_length === 1 ? '' : 's') + ')'"></span>
+                        <div x-show="compareResult.path && compareResult.path.length > 0" style="margin-top: 4px;">
+                            <template x-for="(step, idx) in compareResult.path" :key="idx">
+                                <span class="path-step">
+                                    <span class="path-arrow muted" x-show="idx > 0" x-text="' —[' + step.role + ']→ '"></span>
+                                    <span :class="step.kind === 'person' ? 'path-person' : 'path-entity'" x-text="step.name"></span>
+                                </span>
+                            </template>
+                        </div>
+                        <div class="compare-empty" x-show="!compareResult.path || compareResult.path.length === 0">no path in current graph</div>
+                    </section>
+                </div>
+            </template>
+        </div>
+
+        <div class="metrics-card" x-show="metricsData">
+            <template x-if="metricsData">
+                <div style="display: contents;">
+                    <div>
+                        <h4>Most connected people</h4>
+                        <ol>
+                            <template x-for="p in metricsData.top_people" :key="p.person_id">
+                                <li>
+                                    <span class="metric-link" @click="openPanel(p.person_id)" x-text="p.name"></span>
+                                    <span class="metric-count" x-text="p.total_degree + ' (' + p.family_degree + ' fam · ' + p.entity_degree + ' ent)'"></span>
+                                </li>
+                            </template>
+                        </ol>
+                    </div>
+                    <div>
+                        <h4>Top bridging entities</h4>
+                        <ol>
+                            <template x-for="e in metricsData.top_entities" :key="e.id">
+                                <li>
+                                    <span class="metric-link" @click="openEntityPanel(e.id)" x-text="e.name"></span>
+                                    <span class="metric-count" x-text="e.person_count + ' people'"></span>
+                                </li>
+                            </template>
+                        </ol>
+                    </div>
+                    <div>
+                        <h4>Largest family cluster <span class="metric-count" x-text="'(' + metricsData.largest_family.size + ')'"></span></h4>
+                        <ol>
+                            <template x-for="m in metricsData.largest_family.members" :key="m.person_id">
+                                <li>
+                                    <span class="metric-link" @click="openPanel(m.person_id)" x-text="m.name"></span>
+                                </li>
+                            </template>
+                        </ol>
+                    </div>
+                </div>
+            </template>
+        </div>
+
         <div class="families-status" x-show="familiesRefresh.running || familiesRefresh.message">
             <div x-show="familiesRefresh.running">
                 <strong x-text="familiesRefresh.message || 'Working…'"></strong>
                 <span class="muted" x-show="familiesRefresh.stage === 'resolve'"
                       x-text="' — ' + familiesRefresh.done + ' / ' + familiesRefresh.total + ' (' + familiesRefresh.qids_resolved + ' resolved)'"></span>
+                <div class="refresh-progress">
+                    <div class="refresh-progress-bar" :style="`width: ${refreshPercent()}%`"></div>
+                </div>
+                <div class="refresh-stages muted">
+                    <template x-for="s in refreshStages" :key="s.key">
+                        <span class="refresh-stage" :class="refreshStageClass(s.key)" x-text="s.label"></span>
+                    </template>
+                </div>
             </div>
             <div class="muted" x-show="!familiesRefresh.running &amp;&amp; familiesRefresh.message" x-text="familiesRefresh.message"></div>
         </div>
@@ -378,6 +491,9 @@
             <span class="legend-item"><span class="legend-dot" style="background:#0984e3"></span> company</span>
             <span class="legend-item"><span class="legend-dot" style="background:#00b894"></span> school</span>
             <span class="legend-item"><span class="legend-dot" style="background:#e17055"></span> board / org</span>
+            <span class="legend-item"><span class="legend-dot" style="background:#9b59b6"></span> shared holding</span>
+            <span class="legend-item"><span class="legend-dot" style="background:#d35400"></span> private co.</span>
+            <span class="legend-item"><span class="legend-dot" style="background:#c0392b"></span> political party</span>
         </div>
     </main>
 
@@ -763,7 +879,7 @@
     <script src="/js/tabs/dashboard.js?v=1"></script>
     <script src="/js/tabs/table.js?v=1"></script>
     <script src="/js/tabs/analytics.js?v=2"></script>
-    <script src="/js/tabs/families.js?v=2"></script>
+    <script src="/js/tabs/families.js?v=6"></script>
     <script src="/js/tabs/scraper.js?v=1"></script>
     <script src="/js/tabs/export.js?v=1"></script>
     <script src="/js/tabs/panel.js?v=3"></script>

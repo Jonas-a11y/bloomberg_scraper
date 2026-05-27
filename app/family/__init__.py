@@ -14,6 +14,7 @@ the disambiguation step naturally drop out.
 """
 from .bridges import (
     filter_bridges, write_edges, write_entities_and_links, write_entity_edges,
+    write_second_tier,
 )
 from .constants import (
     BUSINESS_HINTS,
@@ -24,15 +25,19 @@ from .constants import (
     RELATION_PROPS,
     REVERSE_ROLE,
 )
-from .queries import find_path, get_entity_detail, get_graph
+from .holdings import refresh_holdings_bridges
+from .queries import compare_persons, find_path, get_entity_detail, get_graph, get_metrics
 from .refresh import get_state, is_running, run_refresh
 from .resolver import looks_like_billionaire, resolve_persons, resolve_qid, sync_persons_index
 from .wikidata import (
     fetch_entity_edges,
     fetch_entity_metadata,
     fetch_entity_relations,
+    fetch_award_relations,
+    fetch_neighbor_edges,
     fetch_position_relations,
     fetch_relations,
+    fetch_series_parents,
     search_candidates,
 )
 
@@ -43,15 +48,20 @@ __all__ = [
     "REVERSE_ROLE", "ENTITY_KIND_BY_INSTANCE", "BUSINESS_HINTS",
     # wikidata
     "search_candidates", "fetch_relations", "fetch_entity_relations",
-    "fetch_entity_metadata", "fetch_entity_edges", "fetch_position_relations",
+    "fetch_entity_metadata", "fetch_entity_edges", "fetch_neighbor_edges",
+    "fetch_position_relations",
+    "fetch_award_relations", "fetch_series_parents",
     # resolver
     "looks_like_billionaire", "resolve_qid", "resolve_persons",
     "sync_persons_index",
     # bridges
     "filter_bridges", "write_edges", "write_entities_and_links",
-    "write_entity_edges",
+    "write_entity_edges", "write_second_tier",
+    # holdings
+    "refresh_holdings_bridges",
     # refresh
     "get_state", "is_running", "run_refresh",
     # queries
-    "get_graph", "find_path", "get_entity_detail",
+    "get_graph", "find_path", "get_entity_detail", "get_metrics",
+    "compare_persons",
 ]

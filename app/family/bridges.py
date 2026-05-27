@@ -8,7 +8,7 @@ graph view.
 from app.database import get_network_db
 
 
-def filter_bridges(triples, min_links=2, max_links=50):
+def filter_bridges(triples, min_links=2, max_links=75):
     """Keep entities that connect between min_links and max_links distinct
     persons. Returns (kept_triples, kept_qids)."""
     persons_per_entity = {}
@@ -40,7 +40,9 @@ def write_entities_and_links(triples, metadata):
     conn.execute("DELETE FROM entity_links WHERE source = 'wikidata'")
     conn.execute(
         "DELETE FROM entities WHERE entity_id NOT IN "
-        "(SELECT entity_id FROM entity_links)"
+        "(SELECT entity_id FROM entity_links "
+        " UNION SELECT entity_a_id FROM entity_edges "
+        " UNION SELECT entity_b_id FROM entity_edges)"
     )
 
     cols = ("qid", "name", "kind", "description", "inception_year", "country",
@@ -115,6 +117,64 @@ def write_entity_edges(edges):
     conn.commit()
     conn.close()
     return written
+
+
+def write_second_tier(metadata, edges):
+    """Insert second-tier entities (with metadata) and their entity_edges.
+
+    Second-tier entities are not connected to any person directly — they exist
+    purely to bridge two or more first-tier bridges (e.g. a holding company
+    that owns subsidiaries already in the graph). They show up in the graph
+    via entity_edges only; pruning queries elsewhere preserve them by
+    checking entity_edges membership.
+
+    Returns (entities_inserted, edges_inserted)."""
+    if not metadata and not edges:
+        return 0, 0
+    conn = get_network_db()
+
+    cols = ("qid", "name", "kind", "description", "inception_year", "country",
+            "industry", "website", "employee_count", "revenue_usd",
+            "wikipedia_url")
+    placeholders = ", ".join("?" * len(cols))
+    update_assignments = ", ".join(f"{c} = excluded.{c}" for c in cols[1:])
+    insert_sql = (
+        f"INSERT INTO entities ({', '.join(cols)}) VALUES ({placeholders}) "
+        f"ON CONFLICT(qid) DO UPDATE SET {update_assignments}"
+    )
+    for entity_qid, meta in metadata.items():
+        conn.execute(insert_sql, (
+            entity_qid,
+            meta.get("name"),
+            meta.get("kind"),
+            meta.get("description"),
+            meta.get("inception_year"),
+            meta.get("country"),
+            meta.get("industry"),
+            meta.get("website"),
+            meta.get("employee_count"),
+            meta.get("revenue_usd"),
+            meta.get("wikipedia_url"),
+        ))
+
+    qid_to_eid = {
+        row["qid"]: row["entity_id"]
+        for row in conn.execute("SELECT entity_id, qid FROM entities").fetchall()
+    }
+    edges_inserted = 0
+    for s_qid, kind, o_qid in edges:
+        a = qid_to_eid.get(s_qid)
+        b = qid_to_eid.get(o_qid)
+        if a and b and a != b:
+            cur = conn.execute(
+                "INSERT OR IGNORE INTO entity_edges "
+                "(entity_a_id, entity_b_id, kind, source) VALUES (?, ?, ?, 'wikidata')",
+                (a, b, kind),
+            )
+            edges_inserted += cur.rowcount
+    conn.commit()
+    conn.close()
+    return len(metadata), edges_inserted
 
 
 def write_edges(edges):

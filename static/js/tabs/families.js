@@ -6,7 +6,9 @@ const FAMILIES_INDUSTRY_COLOR = {
 const FAMILIES_ENTITY_COLOR = {
     company: '#0984e3', school: '#00b894',
     board: '#e17055', organization: '#e17055',
-    work: '#b2bec3', other: '#95a5a6',
+    work: '#b2bec3', stock: '#9b59b6',
+    private_company: '#d35400', party: '#c0392b',
+    other: '#95a5a6',
 };
 const FAMILIES_EDGE_COLOR = {
     spouse: '#ff6b6b',
@@ -14,6 +16,18 @@ const FAMILIES_EDGE_COLOR = {
     sibling: '#fdcb6e',
     relative: '#a29bfe',
 };
+// Ordered stages used by run_refresh() in app/family/refresh.py. Only `resolve`
+// reports done/total — the others are batched SPARQL fires, so the bar jumps
+// when the stage flips. Order here drives the percent calculation.
+const FAMILIES_REFRESH_STAGES = [
+    { key: 'resolve', label: 'Resolve' },
+    { key: 'relations', label: 'Family' },
+    { key: 'entities', label: 'Entities' },
+    { key: 'labels', label: 'Labels' },
+    { key: 'entity_edges', label: 'Edges' },
+    { key: 'second_tier', label: '2nd-tier' },
+    { key: 'holdings', label: 'Holdings' },
+];
 
 function familiesMixin() {
     return {
@@ -25,14 +39,18 @@ function familiesMixin() {
         pathFromPerson: null, pathFromQuery: '', pathFromResults: [],
         pathToPerson: null, pathToQuery: '', pathToResults: [],
         pathChain: [], pathMessage: '', pathHighlightIds: [],
+        metricsData: null,
+        compareResult: null,
 
         async loadFamilies() {
-            const [graph, status] = await Promise.all([
+            const [graph, status, metrics] = await Promise.all([
                 fetch('/api/families').then(r => r.json()),
                 fetch('/api/families/refresh').then(r => r.json()),
+                fetch('/api/families/metrics').then(r => r.json()),
             ]);
             this.familiesGraph = graph;
             this.familiesRefresh = status;
+            this.metricsData = metrics;
             this.$nextTick(() => this.renderFamilyGraph());
             if (status.running && !this.familiesTimer) {
                 this.familiesTimer = setInterval(async () => {
@@ -40,7 +58,12 @@ function familiesMixin() {
                     if (!this.familiesRefresh.running) {
                         clearInterval(this.familiesTimer);
                         this.familiesTimer = null;
-                        this.familiesGraph = await fetch('/api/families').then(r => r.json());
+                        const [g, m] = await Promise.all([
+                            fetch('/api/families').then(r => r.json()),
+                            fetch('/api/families/metrics').then(r => r.json()),
+                        ]);
+                        this.familiesGraph = g;
+                        this.metricsData = m;
                         this.renderFamilyGraph();
                     }
                 }, 3000);
@@ -50,6 +73,34 @@ function familiesMixin() {
         async triggerFamilyRefresh() {
             await fetch('/api/families/refresh', { method: 'POST' });
             this.loadFamilies();
+        },
+
+        refreshStages: FAMILIES_REFRESH_STAGES,
+
+        refreshStageIndex() {
+            const stage = this.familiesRefresh.stage;
+            const i = FAMILIES_REFRESH_STAGES.findIndex(s => s.key === stage);
+            return i >= 0 ? i : -1;
+        },
+
+        refreshPercent() {
+            const i = this.refreshStageIndex();
+            const total = FAMILIES_REFRESH_STAGES.length;
+            if (i < 0) return this.familiesRefresh.running ? 1 : 0;
+            let frac = 0;
+            if (this.familiesRefresh.stage === 'resolve' && this.familiesRefresh.total > 0) {
+                frac = Math.min(this.familiesRefresh.done / this.familiesRefresh.total, 1);
+            }
+            return Math.round(((i + frac) / total) * 100);
+        },
+
+        refreshStageClass(key) {
+            const i = this.refreshStageIndex();
+            const j = FAMILIES_REFRESH_STAGES.findIndex(s => s.key === key);
+            if (i < 0 || j < 0) return '';
+            if (j < i) return 'stage-done';
+            if (j === i) return 'stage-active';
+            return '';
         },
 
         hasNetworkData() {
@@ -84,6 +135,7 @@ function familiesMixin() {
             this.pathMessage = '';
             this.pathChain = [];
             this.pathHighlightIds = [];
+            this.compareResult = null;
             if (!this.pathFromPerson || !this.pathToPerson) return;
             const url = `/api/families/path?from=${this.pathFromPerson.person_id}&to=${this.pathToPerson.person_id}`;
             const res = await fetch(url);
@@ -98,10 +150,31 @@ function familiesMixin() {
             this.renderFamilyGraph();
         },
 
+        async comparePath() {
+            this.pathMessage = '';
+            this.pathChain = [];
+            this.compareResult = null;
+            this.pathHighlightIds = [];
+            if (!this.pathFromPerson || !this.pathToPerson) return;
+            const url = `/api/families/compare?a=${this.pathFromPerson.person_id}&b=${this.pathToPerson.person_id}`;
+            const res = await fetch(url);
+            if (!res.ok) {
+                this.pathMessage = 'Could not compare these two people.';
+                return;
+            }
+            const data = await res.json();
+            this.compareResult = data;
+            if (data.path && data.path.length > 0) {
+                this.pathHighlightIds = data.path.map(s => s.kind === 'person' ? `p${s.id}` : `e${s.id}`);
+                this.renderFamilyGraph();
+            }
+        },
+
         clearPath() {
             this.pathChain = [];
             this.pathHighlightIds = [];
             this.pathMessage = '';
+            this.compareResult = null;
             this.pathFromPerson = null;
             this.pathToPerson = null;
             this.pathFromQuery = '';

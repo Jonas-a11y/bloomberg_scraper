@@ -33,6 +33,19 @@ def path(from_id: int = Query(..., alias="from"), to_id: int = Query(..., alias=
     return {"chain": chain, "length": max(len(chain) - 1, 0)}
 
 
+@router.get("/families/metrics")
+def metrics():
+    return family.get_metrics()
+
+
+@router.get("/families/compare")
+def compare(a_id: int = Query(..., alias="a"), b_id: int = Query(..., alias="b")):
+    result = family.compare_persons(a_id, b_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="One or both persons not found")
+    return result
+
+
 @router.get("/entities/{entity_id}")
 def entity_detail(entity_id: int):
     detail = family.get_entity_detail(entity_id)
