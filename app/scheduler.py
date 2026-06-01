@@ -68,6 +68,16 @@ def run_scrape(attempt=1):
         conn.commit()
         conn.close()
         logger.info(f"Scrape complete: {len(rows)} records in {duration_ms}ms")
+        # Pick up history for any newcomers in the background. apscheduler runs
+        # this on its own thread so the scrape thread can exit cleanly.
+        scheduler.add_job(
+            run_history_backfill,
+            "date",
+            run_date=datetime.now() + timedelta(seconds=5),
+            kwargs={"only_new": True},
+            id=f"newcomer_backfill_{run_id}",
+            replace_existing=True,
+        )
     except Exception as e:
         duration_ms = int((time.time() - start) * 1000)
         next_attempt = attempt + 1
@@ -150,26 +160,56 @@ def get_next_run():
     return min(next_times).isoformat()
 
 
-def run_history_backfill(delay_sec=1.5):
-    """Iterate every known person, fetch profile history, write to wealth_history."""
+def run_history_backfill(delay_sec=1.5, only_new=False):
+    """Fetch profile history for persons and write to wealth_history.
+
+    only_new=True restricts to persons not yet in history_backfilled, which is
+    what runs automatically after a scrape picks up newcomers.
+
+    Otherwise, fetches every person currently in the latest snapshot. Dropouts
+    are deliberately skipped so a stale/empty Bloomberg profile page can't
+    overwrite the history we already captured for them."""
     if _backfill_state["running"]:
         return
     conn = get_db()
-    rows = conn.execute(
-        "SELECT person_id, slug, common_name FROM persons WHERE slug IS NOT NULL"
-    ).fetchall()
+    if only_new:
+        rows = conn.execute("""
+            SELECT p.person_id, p.slug, p.common_name
+            FROM persons p
+            LEFT JOIN history_backfilled h ON h.person_id = p.person_id
+            WHERE p.slug IS NOT NULL AND h.person_id IS NULL
+        """).fetchall()
+    else:
+        rows = conn.execute("""
+            SELECT p.person_id, p.slug, p.common_name
+            FROM persons p
+            JOIN snapshots s ON s.person_id = p.person_id
+            WHERE p.slug IS NOT NULL
+              AND s.scraped_at = (SELECT MAX(scraped_at) FROM snapshots)
+            GROUP BY p.person_id
+        """).fetchall()
     conn.close()
+
+    if not rows:
+        return
 
     _backfill_state.update({
         "running": True, "done": 0, "total": len(rows), "errors": 0,
         "started_at": datetime.now().isoformat(), "finished_at": None,
     })
-    logger.info(f"History backfill: {len(rows)} profiles to fetch")
+    logger.info(f"History backfill ({'new only' if only_new else 'all'}): {len(rows)} profiles to fetch")
     try:
         for person_id, slug, name in rows:
             try:
                 stats = fetch_person_history(slug)
                 insert_wealth_history(None, person_id, stats)
+                conn = get_db()
+                conn.execute(
+                    "INSERT OR REPLACE INTO history_backfilled (person_id, backfilled_at) VALUES (?, ?)",
+                    (person_id, datetime.now().isoformat()),
+                )
+                conn.commit()
+                conn.close()
             except Exception as e:
                 _backfill_state["errors"] += 1
                 logger.warning(f"Backfill failed for {name} ({slug}): {e}")
