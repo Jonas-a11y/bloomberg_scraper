@@ -2,7 +2,7 @@
 import logging
 from datetime import datetime
 
-from app.database import get_network_db
+from app.database import get_db, get_network_db
 
 from .bridges import (
     filter_bridges,
@@ -19,9 +19,11 @@ from .wikidata import (
     fetch_entity_relations,
     fetch_award_relations,
     fetch_neighbor_edges,
+    fetch_person_metadata,
     fetch_position_relations,
     fetch_relations,
     fetch_series_parents,
+    fetch_wikipedia_thumbnail,
 )
 
 logger = logging.getLogger(__name__)
@@ -41,6 +43,7 @@ _state = {
     "second_tier_edges_added": 0,
     "holdings_bridges_added": 0,
     "holdings_links_added": 0,
+    "images_added": 0,
     "started_at": None,
     "finished_at": None,
     "message": None,
@@ -67,6 +70,7 @@ def run_refresh():
         "entity_edges_added": 0,
         "second_tier_added": 0, "second_tier_edges_added": 0,
         "holdings_bridges_added": 0, "holdings_links_added": 0,
+        "images_added": 0,
         "started_at": datetime.now().isoformat(),
         "finished_at": None,
         "message": "Resolving Wikidata QIDs…",
@@ -86,6 +90,66 @@ def run_refresh():
         _state["message"] = "Fetching family relations…"
         edges = fetch_relations(qids, state=_state)
         _state["edges_added"] = write_edges(edges)
+
+        _state["stage"] = "person_metadata"
+        _state["message"] = "Fetching person metadata + photos…"
+        meta = fetch_person_metadata(qids, state=_state)
+
+        # Wikipedia thumbnail fallback for persons without P18 but with an article.
+        for qid, row in meta.items():
+            if not row.get("image_filename") and row.get("wikipedia_url"):
+                thumb = fetch_wikipedia_thumbnail(row["wikipedia_url"])
+                if thumb:
+                    row["image_url"] = thumb
+
+        if meta:
+            net = get_network_db()
+            updates = []
+            for qid, row in meta.items():
+                # Persisted columns: image_url (commons URL or wp thumbnail),
+                # signature_filename, wikidata_metadata (json blob of the rest).
+                image_url = row.get("image_url")
+                if not image_url and row.get("image_filename"):
+                    from urllib.parse import quote
+                    image_url = (
+                        "https://commons.wikimedia.org/wiki/Special:FilePath/"
+                        + quote(row["image_filename"])
+                        + "?width=320"
+                    )
+                blob = {k: v for k, v in row.items() if k not in (
+                    "image_filename", "image_url", "signature_filename"
+                )}
+                import json as _json
+                updates.append((
+                    image_url,
+                    row.get("signature_filename"),
+                    _json.dumps(blob, ensure_ascii=False) if blob else None,
+                    qid,
+                ))
+            net.executemany(
+                "UPDATE persons_index SET image_url = ?, signature_filename = ?, "
+                "wikidata_metadata = ? WHERE wikidata_qid = ?",
+                updates,
+            )
+            net.commit()
+
+            # Overwrite the heuristic-detected gender on persons with Wikidata's
+            # authoritative P21 value. Joins via persons_index.wikidata_qid →
+            # person_id since persons.gender lives in the main DB.
+            qid_to_gender = {qid: r["gender"] for qid, r in meta.items() if r.get("gender")}
+            if qid_to_gender:
+                qid_to_pid = dict(net.execute(
+                    "SELECT wikidata_qid, person_id FROM persons_index WHERE wikidata_qid IS NOT NULL"
+                ).fetchall())
+                main = get_db()
+                main.executemany(
+                    "UPDATE persons SET gender = ?, gender_confidence = 1.0 WHERE person_id = ?",
+                    [(g, qid_to_pid[qid]) for qid, g in qid_to_gender.items() if qid in qid_to_pid],
+                )
+                main.commit()
+                main.close()
+            net.close()
+        _state["images_added"] = sum(1 for r in meta.values() if r.get("image_filename") or r.get("image_url"))
 
         _state["stage"] = "entities"
         _state["message"] = "Fetching shared employers / schools / boards…"

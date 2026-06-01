@@ -2,7 +2,7 @@
 // Thin Alpine root that composes per-tab mixins. Each mixin lives in
 // static/js/tabs/* and returns a partial state + methods object. They are
 // merged into one Alpine reactive instance so cross-tab `this` access works.
-const VALID_TABS = ['dashboard', 'table', 'analytics', 'families', 'scraper', 'export'];
+const VALID_TABS = ['dashboard', 'table', 'analytics', 'families', 'scraper', 'export', 'profile'];
 
 function app() {
     return {
@@ -13,6 +13,7 @@ function app() {
         ...scraperMixin(),
         ...exportMixin(),
         ...panelMixin(),
+        ...profileMixin(),
 
         tab: 'dashboard',
 
@@ -45,6 +46,12 @@ function app() {
                 else if (t === 'analytics') this.loadAnalytics();
                 else if (t === 'families') this.loadFamilies();
                 else if (t === 'scraper') this.loadScraper();
+            }
+            if (t === 'profile') {
+                const id = params.get('id');
+                if (id && (!this.profile || String(this.profile.person_id) !== id)) {
+                    this.loadProfile(parseInt(id, 10));
+                }
             }
             const personId = params.get('person');
             if (personId && (!this.panelPerson || String(this.panelPerson.person_id) !== personId)) {

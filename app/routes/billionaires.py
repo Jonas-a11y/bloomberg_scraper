@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Query
 
 from app.database import get_db
+from app.family.queries import get_person_profile
 
 router = APIRouter()
 
@@ -100,6 +101,14 @@ def person_detail(person_id: int):
     if not row:
         return {"error": "not found"}
     return dict(row)
+
+
+@router.get("/persons/{person_id}/profile")
+def person_profile(person_id: int):
+    profile = get_person_profile(person_id)
+    if not profile:
+        return {"error": "not found"}
+    return profile
 
 
 @router.get("/search")

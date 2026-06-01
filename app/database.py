@@ -215,6 +215,7 @@ def init_db(db_path=None, network_db_path=None):
     nconn = sqlite3.connect(npath)
     nconn.executescript(NETWORK_SCHEMA)
     _migrate_entities_columns(nconn)
+    _migrate_persons_index_columns(nconn)
     nconn.close()
 
     _migrate_network_data_out_of_main(path, npath)
@@ -236,6 +237,24 @@ def _migrate_entities_columns(conn):
     for col, sql_type in additions:
         if col not in existing:
             conn.execute(f"ALTER TABLE entities ADD COLUMN {col} {sql_type}")
+    conn.commit()
+
+
+def _migrate_persons_index_columns(conn):
+    """Idempotent: add Wikidata-sourced image URL, signature filename, and a
+    JSON blob of secondary metadata (description, dates, places, occupations,
+    residence, languages, children count, gender, wikipedia url)."""
+    existing = {r[1] for r in conn.execute("PRAGMA table_info(persons_index)").fetchall()}
+    additions = [
+        ("image_url", "TEXT"),
+        ("signature_filename", "TEXT"),
+        ("wikidata_metadata", "TEXT"),
+        # legacy column retained — kept for older DBs but unused going forward.
+        ("image_filename", "TEXT"),
+    ]
+    for col, sql_type in additions:
+        if col not in existing:
+            conn.execute(f"ALTER TABLE persons_index ADD COLUMN {col} {sql_type}")
     conn.commit()
 
 

@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 
 from apscheduler.schedulers.background import BackgroundScheduler
 
-from app.database import get_db, insert_scrape_data, insert_wealth_history
+from app.database import get_db, get_network_db, insert_scrape_data, insert_wealth_history
 from app.scraper import scrape_billionaires, fetch_person_history
 
 logger = logging.getLogger(__name__)
@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 scheduler = BackgroundScheduler()
 _is_running = False
 _backfill_state = {"running": False, "done": 0, "total": 0, "errors": 0, "started_at": None, "finished_at": None}
+_newcomer_wikidata_state = {"running": False, "done": 0, "total": 0, "started_at": None, "finished_at": None}
 
 # Bloomberg occasionally rate-limits or 5xx's the scrape; rather than wait for
 # the next scheduled run (could be 24h away), automatically retry with growing
@@ -76,6 +77,17 @@ def run_scrape(attempt=1):
             run_date=datetime.now() + timedelta(seconds=5),
             kwargs={"only_new": True},
             id=f"newcomer_backfill_{run_id}",
+            replace_existing=True,
+        )
+        # Also resolve Wikidata QIDs and pull authoritative gender/metadata for
+        # newcomers so a fresh billionaire doesn't sit on heuristic gender
+        # until the next manual network refresh. Runs a few seconds later so
+        # the two background jobs don't fight for the same connections.
+        scheduler.add_job(
+            run_newcomer_wikidata_catchup,
+            "date",
+            run_date=datetime.now() + timedelta(seconds=10),
+            id=f"newcomer_wikidata_{run_id}",
             replace_existing=True,
         )
     except Exception as e:
@@ -230,3 +242,133 @@ def get_backfill_state():
 
 def is_backfill_running():
     return _backfill_state["running"]
+
+
+def run_newcomer_wikidata_catchup():
+    """Resolve Wikidata QIDs and pull authoritative gender for newcomers.
+
+    Runs after each successful scrape so a brand-new billionaire gets their
+    correct Wikidata-derived gender (and any other metadata we already cache)
+    written into persons.gender / persons_index without waiting for the next
+    manual network refresh.
+
+    Scope is intentionally limited to persons whose persons_index row still
+    has wikidata_qid IS NULL — i.e. genuine newcomers. We also skip if a full
+    network refresh is already running to avoid concurrent SPARQL traffic."""
+    if _newcomer_wikidata_state["running"]:
+        return
+    from app.family.refresh import is_running as is_refresh_running
+    if is_refresh_running():
+        logger.info("Newcomer Wikidata catch-up skipped: full refresh already running")
+        return
+
+    from app.family.resolver import resolve_qid, sync_persons_index
+    from app.family.wikidata import fetch_person_metadata, fetch_wikipedia_thumbnail
+
+    sync_persons_index()
+    net = get_network_db()
+    main = get_db()
+    pending = net.execute(
+        "SELECT person_id, common_name FROM persons_index WHERE wikidata_qid IS NULL"
+    ).fetchall()
+    full_names = {
+        row["person_id"]: row["full_name"]
+        for row in main.execute("SELECT person_id, full_name FROM persons").fetchall()
+    }
+    main.close()
+    net.close()
+
+    if not pending:
+        return
+
+    _newcomer_wikidata_state.update({
+        "running": True, "done": 0, "total": len(pending),
+        "started_at": datetime.now().isoformat(), "finished_at": None,
+    })
+    logger.info(f"Newcomer Wikidata catch-up: resolving {len(pending)} persons")
+    try:
+        resolved = []
+        for row in pending:
+            name = full_names.get(row["person_id"]) or row["common_name"]
+            qid = resolve_qid(name) if name else None
+            if qid:
+                net = get_network_db()
+                net.execute(
+                    "UPDATE persons_index SET wikidata_qid = ? WHERE person_id = ?",
+                    (qid, row["person_id"]),
+                )
+                net.commit()
+                net.close()
+                resolved.append((row["person_id"], qid))
+            _newcomer_wikidata_state["done"] += 1
+            time.sleep(0.2)
+
+        if not resolved:
+            return
+
+        qids = [q for _, q in resolved]
+        meta = fetch_person_metadata(qids)
+        if not meta:
+            return
+
+        for qid, info in meta.items():
+            if not info.get("image_filename") and info.get("wikipedia_url"):
+                thumb = fetch_wikipedia_thumbnail(info["wikipedia_url"])
+                if thumb:
+                    info["image_url"] = thumb
+
+        from urllib.parse import quote
+        net = get_network_db()
+        updates = []
+        for qid, info in meta.items():
+            image_url = info.get("image_url")
+            if not image_url and info.get("image_filename"):
+                image_url = (
+                    "https://commons.wikimedia.org/wiki/Special:FilePath/"
+                    + quote(info["image_filename"]) + "?width=320"
+                )
+            blob = {k: v for k, v in info.items() if k not in (
+                "image_filename", "image_url", "signature_filename"
+            )}
+            updates.append((
+                image_url,
+                info.get("signature_filename"),
+                json.dumps(blob, ensure_ascii=False) if blob else None,
+                qid,
+            ))
+        net.executemany(
+            "UPDATE persons_index SET image_url = ?, signature_filename = ?, "
+            "wikidata_metadata = ? WHERE wikidata_qid = ?",
+            updates,
+        )
+        net.commit()
+
+        qid_to_pid = dict(resolved)  # person_id -> qid
+        pid_by_qid = {q: pid for pid, q in qid_to_pid.items()}
+        gender_updates = [
+            (info["gender"], pid_by_qid[qid])
+            for qid, info in meta.items()
+            if info.get("gender") and qid in pid_by_qid
+        ]
+        net.close()
+        if gender_updates:
+            main = get_db()
+            main.executemany(
+                "UPDATE persons SET gender = ?, gender_confidence = 1.0 WHERE person_id = ?",
+                gender_updates,
+            )
+            main.commit()
+            main.close()
+        logger.info(
+            f"Newcomer Wikidata catch-up: resolved {len(resolved)} QIDs, "
+            f"updated {len(gender_updates)} genders"
+        )
+    except Exception as e:
+        logger.exception(f"Newcomer Wikidata catch-up failed: {e}")
+    finally:
+        _newcomer_wikidata_state["running"] = False
+        _newcomer_wikidata_state["finished_at"] = datetime.now().isoformat()
+
+
+def get_newcomer_wikidata_state():
+    return dict(_newcomer_wikidata_state)

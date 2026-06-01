@@ -156,6 +156,178 @@ def get_entity_detail(entity_id):
         main.close()
 
 
+def get_person_profile(person_id):
+    """Combined profile payload: bloomberg metadata + last snapshot (latest if
+    still active, last-seen if dropped), full wealth history, family edges with
+    related person names, and entity links with entity metadata.
+
+    Works for both current and dropped-out persons. Returns None if unknown."""
+    main = get_db()
+    person = main.execute("""
+        SELECT p.person_id, p.common_name, p.full_name, p.first_name, p.last_name,
+               p.middle_name, p.citizenship, p.age, p.birth_year, p.gender,
+               p.gender_confidence, p.industry, p.biography, p.overview,
+               p.net_worth_summary, p.schools_json, p.facts_json,
+               p.milestones_json, p.slug
+        FROM persons p
+        WHERE p.person_id = ?
+    """, (person_id,)).fetchone()
+    if not person:
+        main.close()
+        return None
+    person = dict(person)
+
+    snapshot = main.execute("""
+        SELECT s.scraped_at, s.rank, s.net_worth_usd, s.last_change_usd,
+               s.last_change_pct, s.ytd_change_usd, s.ytd_change_pct,
+               s.public_assets_total, s.private_assets_total, s.cash_assets_total,
+               s.public_assets_json, s.private_assets_json,
+               s.cash_asset_value, s.liabilities_value, s.liabilities_note
+        FROM snapshots s
+        WHERE s.person_id = ?
+        ORDER BY s.scraped_at DESC LIMIT 1
+    """, (person_id,)).fetchone()
+    snapshot = dict(snapshot) if snapshot else {}
+
+    latest_at = main.execute(
+        "SELECT MAX(scraped_at) FROM snapshots"
+    ).fetchone()[0]
+    is_active = bool(snapshot) and snapshot.get("scraped_at") == latest_at
+
+    history = [dict(r) for r in main.execute(
+        "SELECT date, net_worth_usd FROM wealth_history "
+        "WHERE person_id = ? ORDER BY date",
+        (person_id,),
+    ).fetchall()]
+    if not history:
+        history = [
+            {"date": r["scraped_at"], "net_worth_usd": r["net_worth_usd"]}
+            for r in main.execute(
+                "SELECT scraped_at, net_worth_usd FROM snapshots "
+                "WHERE person_id = ? AND net_worth_usd IS NOT NULL "
+                "ORDER BY scraped_at",
+                (person_id,),
+            ).fetchall()
+        ]
+
+    main.close()
+
+    net = get_network_db()
+    try:
+        family_rows = net.execute("""
+            SELECT person_id, related_id, kind FROM family_edges
+            WHERE person_id = ? OR related_id = ?
+        """, (person_id, person_id)).fetchall()
+
+        related_pids = set()
+        for r in family_rows:
+            related_pids.add(r["related_id"] if r["person_id"] == person_id else r["person_id"])
+
+        entity_link_rows = net.execute(
+            "SELECT entity_id, role FROM entity_links WHERE person_id = ?",
+            (person_id,),
+        ).fetchall()
+        entity_ids = [r["entity_id"] for r in entity_link_rows]
+        entities_meta = {}
+        if entity_ids:
+            placeholders = ",".join("?" * len(entity_ids))
+            for r in net.execute(
+                f"SELECT entity_id, name, kind, description, country, industry, "
+                f"website, wikipedia_url FROM entities WHERE entity_id IN ({placeholders})",
+                entity_ids,
+            ).fetchall():
+                entities_meta[r["entity_id"]] = dict(r)
+
+        qid_row = net.execute(
+            "SELECT wikidata_qid, image_url, image_filename, signature_filename, "
+            "wikidata_metadata FROM persons_index WHERE person_id = ?",
+            (person_id,),
+        ).fetchone()
+        wikidata_qid = qid_row["wikidata_qid"] if qid_row else None
+        image_url = qid_row["image_url"] if qid_row else None
+        # Back-compat: older rows only stored the bare filename.
+        if not image_url and qid_row and qid_row["image_filename"]:
+            from urllib.parse import quote
+            image_url = (
+                "https://commons.wikimedia.org/wiki/Special:FilePath/"
+                + quote(qid_row["image_filename"])
+                + "?width=320"
+            )
+        signature_filename = qid_row["signature_filename"] if qid_row else None
+        import json as _json
+        try:
+            wikidata_meta = _json.loads(qid_row["wikidata_metadata"]) if qid_row and qid_row["wikidata_metadata"] else {}
+        except (ValueError, TypeError):
+            wikidata_meta = {}
+    finally:
+        net.close()
+
+    family = []
+    if related_pids:
+        main = get_db()
+        placeholders = ",".join("?" * len(related_pids))
+        rel_meta = {
+            r["person_id"]: dict(r)
+            for r in main.execute(f"""
+                SELECT p.person_id, p.common_name, s.rank, s.net_worth_usd
+                FROM persons p
+                LEFT JOIN snapshots s ON s.person_id = p.person_id
+                  AND s.scraped_at = (SELECT MAX(scraped_at) FROM snapshots
+                                       WHERE person_id = p.person_id)
+                WHERE p.person_id IN ({placeholders})
+            """, list(related_pids)).fetchall()
+        }
+        main.close()
+        seen = set()
+        for r in family_rows:
+            if r["person_id"] == person_id:
+                other_id, kind = r["related_id"], r["kind"]
+            else:
+                other_id, kind = r["person_id"], REVERSE_ROLE.get(r["kind"], r["kind"])
+            key = (other_id, kind)
+            if key in seen:
+                continue
+            seen.add(key)
+            meta = rel_meta.get(other_id, {})
+            family.append({
+                "person_id": other_id,
+                "name": meta.get("common_name", "?"),
+                "kind": kind,
+                "rank": meta.get("rank"),
+                "net_worth_usd": meta.get("net_worth_usd"),
+            })
+        family.sort(key=lambda f: (f["net_worth_usd"] or 0), reverse=True)
+
+    entity_links = []
+    for r in entity_link_rows:
+        meta = entities_meta.get(r["entity_id"], {})
+        entity_links.append({
+            "entity_id": r["entity_id"],
+            "name": meta.get("name", "?"),
+            "entity_kind": meta.get("kind"),
+            "role": r["role"],
+            "description": meta.get("description"),
+            "country": meta.get("country"),
+            "industry": meta.get("industry"),
+            "website": meta.get("website"),
+            "wikipedia_url": meta.get("wikipedia_url"),
+        })
+
+    return {
+        **person,
+        **snapshot,
+        "is_active": is_active,
+        "last_seen_at": snapshot.get("scraped_at"),
+        "wikidata_qid": wikidata_qid,
+        "image_url": image_url,
+        "signature_filename": signature_filename,
+        "wikidata_metadata": wikidata_meta,
+        "history": history,
+        "family": family,
+        "entity_links": entity_links,
+    }
+
+
 def find_path(src_id, dst_id):
     """BFS shortest path between two persons through family + entity bridges.
     Returns list of dicts: [{kind: 'person'|'entity', id, name, role?}, ...]

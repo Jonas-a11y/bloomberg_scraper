@@ -19,10 +19,7 @@ build_master_dataset.py
 tests/
 
 # Local verification screenshots
-verify-*.png
-age-*.png
-analytics-*.png
-cohort-*.png
-dashboard-*.png
-heatmap.png
-scatter-*.png
+*.png
+*.jpg
+*.jpeg
+*.webp

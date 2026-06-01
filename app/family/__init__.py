@@ -26,7 +26,7 @@ from .constants import (
     REVERSE_ROLE,
 )
 from .holdings import refresh_holdings_bridges
-from .queries import compare_persons, find_path, get_entity_detail, get_graph, get_metrics
+from .queries import compare_persons, find_path, get_entity_detail, get_graph, get_metrics, get_person_profile
 from .refresh import get_state, is_running, run_refresh
 from .resolver import looks_like_billionaire, resolve_persons, resolve_qid, sync_persons_index
 from .wikidata import (
@@ -63,5 +63,6 @@ __all__ = [
     "get_state", "is_running", "run_refresh",
     # queries
     "get_graph", "find_path", "get_entity_detail", "get_metrics",
+    "get_person_profile",
     "compare_persons",
 ]

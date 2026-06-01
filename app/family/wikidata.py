@@ -183,6 +183,155 @@ def fetch_position_relations(qids, state=None, chunk=80, timeout=60):
     return triples
 
 
+def fetch_person_metadata(qids, state=None, chunk=80, timeout=60):
+    """Pull a richer per-person bundle from Wikidata for profile display.
+
+    Returns {qid: dict} with keys (any may be missing):
+      - image_filename, signature_filename
+      - description, wikipedia_url
+      - gender ('male'|'female'|'other'), gender_qid
+      - birth_date, death_date (ISO date strings)
+      - birth_place, death_place (label strings)
+      - residence (label)
+      - children_count (int)
+      - occupations (list of labels)
+      - languages (list of labels)
+
+    Uses GROUP_CONCAT for multi-valued props so we get one row per QID."""
+    out = {}
+    qid_list = list(qids)
+    for i in range(0, len(qid_list), chunk):
+        batch = qid_list[i:i + chunk]
+        values = " ".join(f"wd:{q}" for q in batch)
+        # schema:description filtered to English avoids 200+ language rows.
+        # Wikipedia URL via schema:about + sitelink to the enwiki Wikipedia.
+        query = f"""
+        SELECT ?s ?image ?signature ?gender ?dob ?dod
+               ?pobLabel ?podLabel ?residenceLabel ?children ?article
+               (GROUP_CONCAT(DISTINCT ?occupationLabel; separator="|") AS ?occupations)
+               (GROUP_CONCAT(DISTINCT ?languageLabel; separator="|") AS ?languages)
+               (SAMPLE(?desc) AS ?description)
+        WHERE {{
+            VALUES ?s {{ {values} }}
+            OPTIONAL {{ ?s wdt:P18 ?image . }}
+            OPTIONAL {{ ?s wdt:P109 ?signature . }}
+            OPTIONAL {{ ?s wdt:P21 ?gender . }}
+            OPTIONAL {{ ?s wdt:P569 ?dob . }}
+            OPTIONAL {{ ?s wdt:P570 ?dod . }}
+            OPTIONAL {{ ?s wdt:P19 ?pob . ?pob rdfs:label ?pobLabel . FILTER(LANG(?pobLabel) = "en") }}
+            OPTIONAL {{ ?s wdt:P20 ?pod . ?pod rdfs:label ?podLabel . FILTER(LANG(?podLabel) = "en") }}
+            OPTIONAL {{ ?s wdt:P551 ?residence . ?residence rdfs:label ?residenceLabel . FILTER(LANG(?residenceLabel) = "en") }}
+            OPTIONAL {{ ?s wdt:P1971 ?children . }}
+            OPTIONAL {{ ?s wdt:P106 ?occupation . ?occupation rdfs:label ?occupationLabel . FILTER(LANG(?occupationLabel) = "en") }}
+            OPTIONAL {{ ?s wdt:P1412 ?language . ?language rdfs:label ?languageLabel . FILTER(LANG(?languageLabel) = "en") }}
+            OPTIONAL {{
+                ?article schema:about ?s ;
+                         schema:isPartOf <https://en.wikipedia.org/> .
+            }}
+            OPTIONAL {{ ?s schema:description ?desc . FILTER(LANG(?desc) = "en") }}
+        }}
+        GROUP BY ?s ?image ?signature ?gender ?dob ?dod
+                 ?pobLabel ?podLabel ?residenceLabel ?children ?article
+        """
+        for b in sparql(query, state=state, timeout=timeout):
+            qid = b["s"]["value"].rsplit("/", 1)[-1]
+            row = out.setdefault(qid, {})
+
+            from urllib.parse import unquote
+
+            def _filename(key):
+                v = b.get(key, {}).get("value")
+                return unquote(v.rsplit("/", 1)[-1]) if v else None
+
+            def _label(key):
+                v = b.get(key, {}).get("value")
+                return v if v else None
+
+            def _date(key):
+                v = b.get(key, {}).get("value")
+                # Wikidata dates are ISO with leading "+"; trim time + sign.
+                if not v:
+                    return None
+                v = v.lstrip("+")
+                return v.split("T")[0] if "T" in v else v
+
+            row.setdefault("image_filename", _filename("image"))
+            row.setdefault("signature_filename", _filename("signature"))
+            row.setdefault("birth_date", _date("dob"))
+            row.setdefault("death_date", _date("dod"))
+            row.setdefault("birth_place", _label("pobLabel"))
+            row.setdefault("death_place", _label("podLabel"))
+            row.setdefault("residence", _label("residenceLabel"))
+            row.setdefault("description", _label("description"))
+
+            article = b.get("article", {}).get("value")
+            if article:
+                row.setdefault("wikipedia_url", article)
+
+            children = b.get("children", {}).get("value")
+            if children is not None:
+                try:
+                    row["children_count"] = int(children)
+                except (TypeError, ValueError):
+                    pass
+
+            gender_qid = (b.get("gender", {}).get("value") or "").rsplit("/", 1)[-1]
+            if gender_qid:
+                row.setdefault("gender_qid", gender_qid)
+                # Q6581097 = male, Q6581072 = female; everything else → other
+                row.setdefault("gender", {
+                    "Q6581097": "male", "Q6581072": "female",
+                }.get(gender_qid, "other"))
+
+            occs = (b.get("occupations", {}).get("value") or "").split("|")
+            occs = [o for o in occs if o and not o.startswith("Q")]
+            if occs:
+                row["occupations"] = sorted(set(occs))
+
+            langs = (b.get("languages", {}).get("value") or "").split("|")
+            langs = [l for l in langs if l and not l.startswith("Q")]
+            if langs:
+                row["languages"] = sorted(set(langs))
+    return out
+
+
+def fetch_wikipedia_thumbnail(article_url, timeout=10):
+    """Fetch the lead image from Wikipedia's REST page summary endpoint.
+    `article_url` is a full enwiki URL. Returns the thumbnail URL string or
+    None. Used as a fallback when Wikidata P18 is missing.
+
+    Filters out non-portrait artifacts: SVGs (almost always a logo or coat
+    of arms) and URLs that mention "logo" / "coat" / "arms" — those are
+    accurate page images but not what we want next to a person's name."""
+    try:
+        title = article_url.rsplit("/", 1)[-1]
+        if not title:
+            return None
+        r = requests.get(
+            f"https://en.wikipedia.org/api/rest_v1/page/summary/{title}",
+            headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
+            impersonate="chrome",
+            timeout=timeout,
+        )
+        if r.status_code != 200:
+            return None
+        body = r.json()
+        for k in ("originalimage", "thumbnail"):
+            img = body.get(k) or {}
+            src = img.get("source")
+            if not src:
+                continue
+            low = src.lower()
+            if low.endswith(".svg") or low.endswith(".svg.png"):
+                continue
+            if any(bad in low for bad in ("logo", "coat_of_arms", "coat-of-arms", "/arms_")):
+                continue
+            return src
+    except Exception as e:
+        logger.debug(f"wikipedia thumbnail {article_url}: {e}")
+    return None
+
+
 def fetch_series_parents(entity_qids, state=None, chunk=120, timeout=45):
     """Return {qid: series_qid} for entities whose Wikidata page declares
     P179 ("part of the series"). Used to collapse year-by-year instances
