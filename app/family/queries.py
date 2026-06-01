@@ -1,10 +1,19 @@
 """Read-only graph queries used by the API layer."""
+import random
+import statistics
 from collections import deque
 
 from app import database
 from app.database import get_db, get_network_db
 
 from .constants import REVERSE_ROLE
+
+
+# Six-degrees stats are stable until the graph mutates. Key by (counts of the
+# three edge tables) — every refresh path rewrites those tables, so this
+# invalidates automatically. Scoped to process lifetime; first call after
+# restart pays the ~0.5s cost.
+_SIX_DEGREES_CACHE = {}
 
 
 def get_graph():
@@ -76,19 +85,30 @@ def get_entity_detail(entity_id):
             (entity_id,),
         ).fetchall()
         person_ids = [r["person_id"] for r in link_rows]
-        persons_by_id = {}
+        persons_meta = {}
         if person_ids:
             placeholders = ",".join("?" * len(person_ids))
-            for r in main.execute(
-                f"SELECT person_id, common_name FROM persons WHERE person_id IN ({placeholders})",
-                person_ids,
-            ).fetchall():
-                persons_by_id[r["person_id"]] = r["common_name"]
-        people = [
-            {"person_id": r["person_id"], "name": persons_by_id.get(r["person_id"], "?"),
-             "role": r["role"]}
-            for r in link_rows
-        ]
+            wealth_rows = main.execute(f"""
+                SELECT p.person_id, p.common_name, s.net_worth_usd, s.rank
+                FROM persons p
+                LEFT JOIN snapshots s ON p.person_id = s.person_id
+                  AND s.scraped_at = (SELECT MAX(scraped_at) FROM snapshots)
+                WHERE p.person_id IN ({placeholders})
+            """, person_ids).fetchall()
+            for r in wealth_rows:
+                persons_meta[r["person_id"]] = dict(r)
+        people = []
+        for r in link_rows:
+            meta = persons_meta.get(r["person_id"], {})
+            people.append({
+                "person_id": r["person_id"],
+                "name": meta.get("common_name", "?"),
+                "role": r["role"],
+                "net_worth_usd": meta.get("net_worth_usd"),
+                "rank": meta.get("rank"),
+            })
+        people.sort(key=lambda p: p["net_worth_usd"] or 0, reverse=True)
+        aggregate_wealth = sum(p["net_worth_usd"] or 0 for p in people)
 
         edge_rows = net.execute(
             "SELECT entity_a_id, entity_b_id, kind FROM entity_edges "
@@ -100,6 +120,7 @@ def get_entity_detail(entity_id):
             for row in edge_rows
         }
         related_meta = {}
+        related_person_counts = {}
         if related_ids:
             placeholders = ",".join("?" * len(related_ids))
             for r in net.execute(
@@ -107,6 +128,12 @@ def get_entity_detail(entity_id):
                 list(related_ids),
             ).fetchall():
                 related_meta[r["entity_id"]] = (r["name"], r["kind"])
+            for r in net.execute(
+                f"SELECT entity_id, COUNT(*) AS c FROM entity_links "
+                f"WHERE entity_id IN ({placeholders}) GROUP BY entity_id",
+                list(related_ids),
+            ).fetchall():
+                related_person_counts[r["entity_id"]] = r["c"]
         related = []
         for row in edge_rows:
             if row["entity_a_id"] == entity_id:
@@ -117,9 +144,13 @@ def get_entity_detail(entity_id):
             related.append({
                 "entity_id": other_id, "name": name, "entity_kind": ekind,
                 "kind": kind,
+                "person_count": related_person_counts.get(other_id, 0),
             })
+        related.sort(key=lambda r: r["person_count"], reverse=True)
 
-        return {**dict(ent), "people": people, "related": related}
+        return {**dict(ent), "people": people, "related": related,
+                "aggregate_wealth_usd": aggregate_wealth,
+                "person_count": len([p for p in people if p["person_id"]])}
     finally:
         net.close()
         main.close()
@@ -221,6 +252,164 @@ def find_path(src_id, dst_id):
     return chain
 
 
+def _top_schools(main, persons, top_n=10, min_alumni=2):
+    """Top schools by tracked-billionaire alumni count."""
+    rows = main.execute("""
+        SELECT e.entity_id AS id, e.name,
+               COUNT(DISTINCT l.person_id) AS alumni_count,
+               GROUP_CONCAT(l.person_id) AS person_ids_csv
+        FROM net.entities e
+        JOIN net.entity_links l ON l.entity_id = e.entity_id
+        WHERE e.kind = 'school'
+        GROUP BY e.entity_id
+        HAVING alumni_count >= ?
+        ORDER BY alumni_count DESC, e.name
+        LIMIT ?
+    """, (min_alumni, top_n)).fetchall()
+    out = []
+    for r in rows:
+        pids = [int(p) for p in (r["person_ids_csv"] or "").split(",") if p]
+        out.append({
+            "id": r["id"], "name": r["name"],
+            "alumni_count": r["alumni_count"],
+            "alumni": sorted(
+                [{"person_id": pid, "name": persons.get(pid, "?")} for pid in set(pids)],
+                key=lambda p: p["name"],
+            ),
+        })
+    return out
+
+
+def _components(family_neighbors):
+    """All connected components (lists of person_ids) reachable via family edges."""
+    visited = set()
+    components = []
+    for seed in family_neighbors:
+        if seed in visited:
+            continue
+        component = []
+        queue = deque([seed])
+        visited.add(seed)
+        while queue:
+            node = queue.popleft()
+            component.append(node)
+            for nbr in family_neighbors.get(node, ()):
+                if nbr not in visited:
+                    visited.add(nbr)
+                    queue.append(nbr)
+        components.append(component)
+    return components
+
+
+def _dynasties(components, persons, wealth, min_size=3, top_n=5):
+    """Roll up family components into dynasty totals.
+
+    Persons missing from `wealth` (e.g. fell off the index) contribute 0 but
+    are still counted in `member_count` so the UI can show '$X across N of M'."""
+    rollups = []
+    for component in components:
+        if len(component) < min_size:
+            continue
+        member_rows = sorted(
+            [
+                {"person_id": pid, "name": persons.get(pid, "?"),
+                 "net_worth_usd": wealth.get(pid)}
+                for pid in component
+            ],
+            key=lambda r: -(r["net_worth_usd"] or 0),
+        )
+        total = sum((r["net_worth_usd"] or 0) for r in member_rows)
+        tracked = sum(1 for r in member_rows if r["net_worth_usd"])
+        # Surname heuristic: wealthiest tracked member's last whitespace-split
+        # token. Misfires for in-laws / matrilineal clusters — acceptable v1.
+        head = next((r for r in member_rows if r["net_worth_usd"]), member_rows[0])
+        surname = (head["name"] or "").split()[-1] if head["name"] else "Family"
+        rollups.append({
+            "label": f"{surname} family",
+            "member_count": len(component),
+            "tracked_count": tracked,
+            "total_worth_usd": total,
+            "members": member_rows,
+        })
+    rollups.sort(key=lambda r: -r["total_worth_usd"])
+    return rollups[:top_n]
+
+
+def _build_connectivity_adj(family_pairs, entity_link_rows, entity_pairs):
+    """Undirected adjacency keyed by ('person'|'entity', id). Used for
+    six-degrees BFS where we don't care about role/direction."""
+    adj = {}
+    for row in family_pairs:
+        a = ("person", row["person_id"])
+        b = ("person", row["related_id"])
+        adj.setdefault(a, []).append(b)
+        adj.setdefault(b, []).append(a)
+    for row in entity_link_rows:
+        p = ("person", row["person_id"])
+        e = ("entity", row["entity_id"])
+        adj.setdefault(p, []).append(e)
+        adj.setdefault(e, []).append(p)
+    for row in entity_pairs:
+        a = ("entity", row["entity_a_id"])
+        b = ("entity", row["entity_b_id"])
+        adj.setdefault(a, []).append(b)
+        adj.setdefault(b, []).append(a)
+    return adj
+
+
+def _bfs_distance(adj, start, target):
+    """Hop count from start to target, or None if unreachable."""
+    if start == target:
+        return 0
+    if start not in adj:
+        return None
+    seen = {start}
+    queue = deque([(start, 0)])
+    while queue:
+        node, dist = queue.popleft()
+        for nbr in adj.get(node, ()):
+            if nbr == target:
+                return dist + 1
+            if nbr not in seen:
+                seen.add(nbr)
+                queue.append((nbr, dist + 1))
+    return None
+
+
+def _six_degrees(adj, person_node_ids, sample_size=300, seed=42):
+    """Sample random pairs, BFS each, return aggregate hop stats."""
+    if len(person_node_ids) < 2:
+        return None
+    rng = random.Random(seed)
+    pool = list(person_node_ids)
+    distances = []
+    pairs_seen = 0
+    target_pairs = min(sample_size, len(pool) * (len(pool) - 1) // 2)
+    seen_pairs = set()
+    while pairs_seen < target_pairs:
+        a, b = rng.sample(pool, 2)
+        key = (a, b) if a < b else (b, a)
+        if key in seen_pairs:
+            continue
+        seen_pairs.add(key)
+        pairs_seen += 1
+        d = _bfs_distance(adj, ("person", a), ("person", b))
+        if d is not None:
+            distances.append(d)
+    if not distances:
+        return {
+            "sampled_pairs": pairs_seen, "connected_pairs": 0,
+            "avg_hops": None, "median_hops": None, "max_hops": None,
+        }
+    return {
+        "sampled_pairs": pairs_seen,
+        "connected_pairs": len(distances),
+        "avg_hops": round(statistics.fmean(distances), 2),
+        "median_hops": int(statistics.median(distances)),
+        "max_hops": max(distances),
+    }
+
+
 def get_metrics(top_n=5):
     """Snapshot of who/what is most connected in the current graph.
 
@@ -230,6 +419,9 @@ def get_metrics(top_n=5):
       - largest_family: size + member names of the biggest connected component
         when traversing family edges only (entity bridges excluded — clusters
         through "Harvard" or "Goldman Sachs" aren't actual families).
+      - top_schools: top schools by tracked-billionaire alumni count.
+      - dynasties: top family components ranked by aggregate net worth.
+      - six_degrees: avg/median/max hop count across the combined graph.
     """
     main = get_db()
     main.execute("ATTACH DATABASE ? AS net", (str(database.NETWORK_DB_PATH),))
@@ -240,11 +432,21 @@ def get_metrics(top_n=5):
     entity_link_rows = main.execute(
         "SELECT person_id, entity_id FROM net.entity_links"
     ).fetchall()
+    entity_pairs = main.execute(
+        "SELECT entity_a_id, entity_b_id FROM net.entity_edges"
+    ).fetchall()
     persons = {
         row["person_id"]: row["common_name"]
         for row in main.execute(
             "SELECT person_id, common_name FROM persons"
         ).fetchall()
+    }
+    wealth = {
+        row["person_id"]: row["net_worth_usd"]
+        for row in main.execute("""
+            SELECT person_id, net_worth_usd FROM snapshots
+            WHERE scraped_at = (SELECT MAX(scraped_at) FROM snapshots)
+        """).fetchall()
     }
 
     family_neighbors = {}
@@ -282,24 +484,8 @@ def get_metrics(top_n=5):
         """, (top_n,)).fetchall()
     ]
 
-    # Largest family-only connected component via BFS.
-    visited = set()
-    largest = []
-    for seed in family_neighbors:
-        if seed in visited:
-            continue
-        component = []
-        queue = deque([seed])
-        visited.add(seed)
-        while queue:
-            node = queue.popleft()
-            component.append(node)
-            for nbr in family_neighbors.get(node, ()):
-                if nbr not in visited:
-                    visited.add(nbr)
-                    queue.append(nbr)
-        if len(component) > len(largest):
-            largest = component
+    components = _components(family_neighbors)
+    largest = max(components, key=len) if components else []
     largest_family = {
         "size": len(largest),
         "members": sorted(
@@ -307,6 +493,18 @@ def get_metrics(top_n=5):
             key=lambda r: r["name"],
         ),
     }
+    dynasties = _dynasties(components, persons, wealth)
+    top_schools = _top_schools(main, persons)
+
+    cache_key = (len(family_pairs), len(entity_link_rows), len(entity_pairs))
+    if cache_key in _SIX_DEGREES_CACHE:
+        six = _SIX_DEGREES_CACHE[cache_key]
+    else:
+        adj = _build_connectivity_adj(family_pairs, entity_link_rows, entity_pairs)
+        person_pool = {pid for kind, pid in adj if kind == "person"}
+        six = _six_degrees(adj, person_pool)
+        _SIX_DEGREES_CACHE.clear()
+        _SIX_DEGREES_CACHE[cache_key] = six
 
     main.execute("DETACH DATABASE net")
     main.close()
@@ -314,6 +512,9 @@ def get_metrics(top_n=5):
         "top_people": top_people,
         "top_entities": top_entities,
         "largest_family": largest_family,
+        "top_schools": top_schools,
+        "dynasties": dynasties,
+        "six_degrees": six,
     }
 
 

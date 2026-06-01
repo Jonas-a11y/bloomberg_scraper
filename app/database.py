@@ -76,6 +76,13 @@ CREATE TABLE IF NOT EXISTS wealth_history (
 );
 
 CREATE INDEX IF NOT EXISTS idx_wealth_history_date ON wealth_history(date);
+CREATE INDEX IF NOT EXISTS idx_wealth_history_date_value ON wealth_history(date, net_worth_usd DESC);
+
+CREATE TABLE IF NOT EXISTS history_backfilled (
+    person_id     INTEGER PRIMARY KEY,
+    backfilled_at DATETIME NOT NULL,
+    FOREIGN KEY (person_id) REFERENCES persons(person_id)
+);
 
 CREATE TABLE IF NOT EXISTS scrape_runs (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -200,6 +207,7 @@ def init_db(db_path=None, network_db_path=None):
     conn = sqlite3.connect(path)
     conn.executescript(SCHEMA)
     _migrate_legacy_table(conn)
+    _seed_history_backfilled(conn)
     conn.close()
 
     npath = str(network_db_path or NETWORK_DB_PATH)
@@ -228,6 +236,17 @@ def _migrate_entities_columns(conn):
     for col, sql_type in additions:
         if col not in existing:
             conn.execute(f"ALTER TABLE entities ADD COLUMN {col} {sql_type}")
+    conn.commit()
+
+
+def _seed_history_backfilled(conn):
+    """One-time seed: any person who already has wealth_history rows is treated
+    as already backfilled, so we don't re-fetch them. New persons (added in
+    future scrapes) won't be in this table and will be picked up automatically."""
+    conn.execute("""
+        INSERT OR IGNORE INTO history_backfilled (person_id, backfilled_at)
+        SELECT DISTINCT person_id, datetime('now') FROM wealth_history
+    """)
     conn.commit()
 
 
@@ -472,6 +491,8 @@ def get_dashboard_stats(db_path=None):
         return {
             "total_wealth": 0, "count": 0, "snapshots": 0, "latest_scrape": None,
             "history_rows": 0, "history_persons": 0, "history_earliest": None,
+            "country_leaderboard": [], "industry_leaderboard": [],
+            "movement": None, "wealth_age": [], "concentration_trend": [],
         }
     latest_at = latest[0]
     stats = conn.execute("""
@@ -486,6 +507,59 @@ def get_dashboard_stats(db_path=None):
     history = conn.execute(
         "SELECT COUNT(*), COUNT(DISTINCT person_id), MIN(date) FROM wealth_history"
     ).fetchone()
+
+    country_leaderboard = [dict(r) for r in conn.execute("""
+        SELECT p.citizenship AS country,
+               SUM(s.net_worth_usd) AS total_wealth,
+               COUNT(*) AS count
+        FROM snapshots s JOIN persons p ON s.person_id = p.person_id
+        WHERE s.scraped_at = ? AND p.citizenship IS NOT NULL AND p.citizenship != ''
+        GROUP BY p.citizenship
+        ORDER BY total_wealth DESC LIMIT 10
+    """, (latest_at,)).fetchall()]
+
+    industry_leaderboard = [dict(r) for r in conn.execute("""
+        SELECT p.industry,
+               SUM(s.net_worth_usd) AS total_wealth,
+               COUNT(*) AS count
+        FROM snapshots s JOIN persons p ON s.person_id = p.person_id
+        WHERE s.scraped_at = ? AND p.industry IS NOT NULL AND p.industry != ''
+        GROUP BY p.industry
+        ORDER BY total_wealth DESC LIMIT 10
+    """, (latest_at,)).fetchall()]
+
+    movement = _compute_movement(conn, latest_at)
+
+    wealth_age = [dict(r) for r in conn.execute("""
+        SELECT p.common_name AS name, p.age, p.industry, p.citizenship,
+               s.net_worth_usd
+        FROM snapshots s JOIN persons p ON s.person_id = p.person_id
+        WHERE s.scraped_at = ? AND p.age IS NOT NULL AND s.net_worth_usd IS NOT NULL
+    """, (latest_at,)).fetchall()]
+
+    # Snapshot-based concentration: one row per scraped date, picking the
+    # latest scrape per person per day (multiple intra-day scrapes possible).
+    concentration_trend = [dict(r) for r in conn.execute("""
+        WITH per_day AS (
+            SELECT DATE(scraped_at) AS d, person_id, net_worth_usd,
+                   ROW_NUMBER() OVER (PARTITION BY DATE(scraped_at), person_id
+                                      ORDER BY scraped_at DESC) AS rn_day
+            FROM snapshots WHERE net_worth_usd IS NOT NULL
+        ),
+        ranked AS (
+            SELECT d, net_worth_usd,
+                   ROW_NUMBER() OVER (PARTITION BY d ORDER BY net_worth_usd DESC) AS rk
+            FROM per_day WHERE rn_day = 1
+        )
+        SELECT d AS date,
+               SUM(net_worth_usd) AS total,
+               SUM(CASE WHEN rk = 1   THEN net_worth_usd ELSE 0 END) AS top_1,
+               SUM(CASE WHEN rk <= 10 THEN net_worth_usd ELSE 0 END) AS top_10,
+               SUM(CASE WHEN rk <= 100 THEN net_worth_usd ELSE 0 END) AS top_100,
+               COUNT(*) AS count
+        FROM ranked GROUP BY d HAVING count >= 100 ORDER BY d
+    """).fetchall()]
+
     conn.close()
     return {
         "total_wealth": stats[0] or 0,
@@ -495,4 +569,51 @@ def get_dashboard_stats(db_path=None):
         "history_rows": history[0] or 0,
         "history_persons": history[1] or 0,
         "history_earliest": history[2],
+        "country_leaderboard": country_leaderboard,
+        "industry_leaderboard": industry_leaderboard,
+        "movement": movement,
+        "wealth_age": wealth_age,
+        "concentration_trend": concentration_trend,
+    }
+
+
+def _compute_movement(conn, latest_at):
+    """Persons in earliest vs latest snapshot — newcomers and dropouts."""
+    first_at = conn.execute(
+        "SELECT MIN(scraped_at) FROM snapshots"
+    ).fetchone()[0]
+    if not first_at or first_at == latest_at:
+        return {"since": first_at, "until": latest_at,
+                "newcomers_count": 0, "dropped_count": 0,
+                "newcomers": [], "dropped": []}
+    first_pids = {r[0] for r in conn.execute(
+        "SELECT DISTINCT person_id FROM snapshots WHERE scraped_at = ?",
+        (first_at,),
+    ).fetchall()}
+    latest_pids = {r[0] for r in conn.execute(
+        "SELECT DISTINCT person_id FROM snapshots WHERE scraped_at = ?",
+        (latest_at,),
+    ).fetchall()}
+    newcomer_ids = latest_pids - first_pids
+    dropped_ids = first_pids - latest_pids
+
+    def _examples(pids, at, order_dir):
+        if not pids:
+            return []
+        placeholders = ",".join("?" * len(pids))
+        rows = conn.execute(
+            f"""SELECT p.person_id, p.common_name AS name, s.rank, p.slug
+                FROM snapshots s JOIN persons p ON s.person_id = p.person_id
+                WHERE s.scraped_at = ? AND s.person_id IN ({placeholders})
+                ORDER BY s.rank {order_dir} LIMIT 5""",
+            [at, *pids],
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    return {
+        "since": first_at, "until": latest_at,
+        "newcomers_count": len(newcomer_ids),
+        "dropped_count": len(dropped_ids),
+        "newcomers": _examples(newcomer_ids, latest_at, "ASC"),
+        "dropped": _examples(dropped_ids, first_at, "ASC"),
     }

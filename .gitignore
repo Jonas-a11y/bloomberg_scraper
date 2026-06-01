@@ -15,12 +15,14 @@ data/
 scrape_bloomberg.py
 build_master_dataset.py
 
-# Tests (kept out of public repo; existing tracked tests stay tracked)
-tests/test_family.py
-tests/test_export_fields.py
-tests/test_format_js.py
-tests/conftest_refactor.py
-tests/test_entity_enrichment.py
+# Tests (kept out of public repo)
+tests/
 
 # Local verification screenshots
 verify-*.png
+age-*.png
+analytics-*.png
+cohort-*.png
+dashboard-*.png
+heatmap.png
+scatter-*.png

@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Bloomberg Scraper</title>
-    <link rel="stylesheet" href="/style.css?v=21">
+    <link rel="stylesheet" href="/style.css?v=29">
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
     <script src="https://cdn.jsdelivr.net/npm/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
@@ -56,7 +56,79 @@
             </div>
         </div>
 
-        <details class="nerds">
+        <div class="aggregate-grid">
+            <div class="aggregate-card">
+                <h3>Top countries</h3>
+                <div class="chart-wrap"><canvas id="dashCountryChart"></canvas></div>
+            </div>
+            <div class="aggregate-card">
+                <h3>Top industries</h3>
+                <div class="chart-wrap"><canvas id="dashIndustryChart"></canvas></div>
+            </div>
+        </div>
+
+        <div class="aggregate-card" x-show="dashboard.movement && (dashboard.movement.newcomers_count || dashboard.movement.dropped_count)" style="margin-top: 16px;">
+            <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:8px;">
+                <h3 style="margin-bottom:0;">Cohort movement</h3>
+                <span class="muted small" x-show="dashboard.movement"
+                      x-text="dashboard.movement && (dashboard.movement.since || '').split('T')[0] + ' → ' + (dashboard.movement.until || '').split('T')[0]"></span>
+            </div>
+            <template x-if="dashboard.movement">
+                <div class="aggregate-grid">
+                    <div>
+                        <h4 style="font-size: 12px; color: #888; margin-bottom: 6px;">
+                            New entrants
+                            <span class="metric-count" x-text="'(' + dashboard.movement.newcomers_count + ')'"></span>
+                        </h4>
+                        <ul class="metric-sublist" x-show="dashboard.movement.newcomers.length">
+                            <template x-for="p in dashboard.movement.newcomers" :key="p.person_id">
+                                <li>
+                                    <span class="metric-link" @click="openPanel(p.person_id)" x-text="p.name"></span>
+                                    <span class="muted small" x-text="'#' + p.rank"></span>
+                                </li>
+                            </template>
+                        </ul>
+                        <div class="muted small" x-show="!dashboard.movement.newcomers.length">none</div>
+                    </div>
+                    <div>
+                        <h4 style="font-size: 12px; color: #888; margin-bottom: 6px;">
+                            Dropped out
+                            <span class="metric-count" x-text="'(' + dashboard.movement.dropped_count + ')'"></span>
+                        </h4>
+                        <ul class="metric-sublist" x-show="dashboard.movement.dropped.length">
+                            <template x-for="p in dashboard.movement.dropped" :key="p.person_id">
+                                <li>
+                                    <span class="metric-link" @click="openPanel(p.person_id)" x-text="p.name"></span>
+                                    <span class="muted small" x-text="'#' + p.rank"></span>
+                                </li>
+                            </template>
+                        </ul>
+                        <div class="muted small" x-show="!dashboard.movement.dropped.length">none</div>
+                    </div>
+                </div>
+            </template>
+        </div>
+
+        <div class="aggregate-card" x-show="dashboard.wealth_age && dashboard.wealth_age.length" style="margin-top: 16px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; gap: 16px; flex-wrap: wrap;">
+                <h3 style="margin-bottom:0;">Aggregate wealth by age <span class="muted small">(sum across all billionaires)</span></h3>
+                <div class="smoothing-control">
+                    <label for="ageSmoothing" class="muted small">Smoothing</label>
+                    <input id="ageSmoothing" type="range" min="0" max="10" step="1"
+                           x-model.number="ageSmoothing" @input="renderDashboardCharts()">
+                    <span class="muted small smoothing-value"
+                          x-text="ageSmoothing === 0 ? 'off' : '±' + ageSmoothing + 'y'"></span>
+                </div>
+            </div>
+            <div class="chart-wrap chart-wrap-tall"><canvas id="dashAgeLineChart"></canvas></div>
+        </div>
+
+        <div class="aggregate-card" x-show="dashboard.concentration_trend && dashboard.concentration_trend.length" style="margin-top: 16px;">
+            <h3>Wealth concentration <span class="muted small">(snapshot history)</span></h3>
+            <div class="chart-wrap chart-wrap-tall"><canvas id="dashConcentrationChart"></canvas></div>
+        </div>
+
+        <details class="nerds" style="margin-top: 16px;">
             <summary>For the nerds — how the data is gathered</summary>
             <div class="nerds-content">
                 <h4>The short version</h4>
@@ -144,6 +216,31 @@
 
     <!-- Table Tab -->
     <main x-show="tab === 'table'">
+        <div class="movers-strip" x-show="tableData.data.length > 0">
+            <div class="movers-col">
+                <h4>Top gainers today</h4>
+                <ul>
+                    <template x-for="m in topMovers('up')" :key="'up-' + m.person_id">
+                        <li>
+                            <span class="metric-link" @click="openPanel(m.person_id)" x-text="m.common_name"></span>
+                            <span class="positive" x-text="formatChange(m.last_change_usd)"></span>
+                        </li>
+                    </template>
+                </ul>
+            </div>
+            <div class="movers-col">
+                <h4>Top losers today</h4>
+                <ul>
+                    <template x-for="m in topMovers('down')" :key="'dn-' + m.person_id">
+                        <li>
+                            <span class="metric-link" @click="openPanel(m.person_id)" x-text="m.common_name"></span>
+                            <span class="negative" x-text="formatChange(m.last_change_usd)"></span>
+                        </li>
+                    </template>
+                </ul>
+            </div>
+        </div>
+
         <div class="filters">
             <input type="text" placeholder="Search by name..." x-model="tableFilters.q" @input.debounce.300ms="loadTable()">
             <select x-model="tableFilters.country" @change="loadTable()">
@@ -159,32 +256,36 @@
                 <option value="male">Male</option>
                 <option value="female">Female</option>
             </select>
+            <button class="btn-sm" @click="showColumnPicker = !showColumnPicker">Columns</button>
         </div>
+
+        <div class="column-picker" x-show="showColumnPicker" @click.outside="showColumnPicker = false">
+            <template x-for="c in tableColumns" :key="c.key">
+                <label class="field-checkbox">
+                    <input type="checkbox" :checked="isColumnVisible(c.key)" @change="toggleColumn(c.key)">
+                    <span x-text="c.label"></span>
+                </label>
+            </template>
+        </div>
+
         <div class="table-container">
             <table>
                 <thead>
                     <tr>
-                        <th @click="sortTable('rank')">#</th>
-                        <th @click="sortTable('common_name')">Name</th>
-                        <th @click="sortTable('net_worth_usd')">Net Worth</th>
-                        <th @click="sortTable('last_change_usd')">Daily Change</th>
-                        <th @click="sortTable('ytd_change_usd')">YTD Change</th>
-                        <th>Country</th>
-                        <th>Industry</th>
-                        <th @click="sortTable('age')">Age</th>
+                        <template x-for="c in tableColumns.filter(c => isColumnVisible(c.key))" :key="c.key">
+                            <th @click="c.sortable && sortTable(c.key)"
+                                :style="c.sortable ? 'cursor:pointer' : 'cursor:default'">
+                                <span x-text="c.label"></span><span x-text="c.sortable ? sortIndicator(c.key) : ''"></span>
+                            </th>
+                        </template>
                     </tr>
                 </thead>
                 <tbody>
                     <template x-for="b in tableData.data" :key="b.person_id">
                         <tr @click="openPanel(b.person_id)" class="clickable-row">
-                            <td x-text="b.rank"></td>
-                            <td x-text="b.common_name"></td>
-                            <td x-text="formatWealth(b.net_worth_usd)"></td>
-                            <td :class="b.last_change_usd >= 0 ? 'positive' : 'negative'" x-text="formatChange(b.last_change_usd)"></td>
-                            <td :class="b.ytd_change_usd >= 0 ? 'positive' : 'negative'" x-text="formatChange(b.ytd_change_usd)"></td>
-                            <td x-text="b.citizenship"></td>
-                            <td x-text="b.industry"></td>
-                            <td x-text="b.age"></td>
+                            <template x-for="c in tableColumns.filter(c => isColumnVisible(c.key))" :key="c.key">
+                                <td :class="cellClass(b, c)" x-text="formatCell(b, c)"></td>
+                            </template>
                         </tr>
                     </template>
                 </tbody>
@@ -229,7 +330,7 @@
                             @click="setWealthRange(r === 'All' ? 'ALL' : r)" x-text="r"></button>
                 </template>
             </div>
-            <canvas id="wealthChart"></canvas>
+            <div class="chart-wrap chart-wrap-tall"><canvas id="wealthChart"></canvas></div>
         </div>
 
         <div class="chart-area">
@@ -245,25 +346,25 @@
                             @click="setConcentrationRange(r)" x-text="r"></button>
                 </template>
             </div>
-            <canvas id="concentrationChart"></canvas>
+            <div class="chart-wrap chart-wrap-tall"><canvas id="concentrationChart"></canvas></div>
         </div>
 
         <div class="aggregate-grid">
             <div class="aggregate-card">
                 <h3>Wealth by Industry</h3>
-                <canvas id="industryChart"></canvas>
+                <div class="chart-wrap"><canvas id="industryChart"></canvas></div>
             </div>
             <div class="aggregate-card">
                 <h3>Wealth by Country</h3>
-                <canvas id="countryChart"></canvas>
+                <div class="chart-wrap"><canvas id="countryChart"></canvas></div>
             </div>
             <div class="aggregate-card">
                 <h3>Gender Distribution</h3>
-                <canvas id="genderChart"></canvas>
+                <div class="chart-wrap"><canvas id="genderChart"></canvas></div>
             </div>
             <div class="aggregate-card">
                 <h3>Age Distribution</h3>
-                <canvas id="ageChart"></canvas>
+                <div class="chart-wrap"><canvas id="ageChart"></canvas></div>
             </div>
         </div>
     </main>
@@ -418,6 +519,17 @@
             </template>
         </div>
 
+        <div class="six-degrees-strip" x-show="metricsData && metricsData.six_degrees && metricsData.six_degrees.avg_hops !== null">
+            <template x-if="metricsData && metricsData.six_degrees">
+                <div>
+                    <span class="muted">Average separation:</span>
+                    <strong x-text="metricsData.six_degrees.avg_hops + ' hops'"></strong>
+                    <span class="muted" x-text="'· median ' + metricsData.six_degrees.median_hops + ' · max ' + metricsData.six_degrees.max_hops"></span>
+                    <span class="muted small" x-text="'· ' + metricsData.six_degrees.connected_pairs + '/' + metricsData.six_degrees.sampled_pairs + ' sampled pairs connected'"></span>
+                </div>
+            </template>
+        </div>
+
         <div class="metrics-card" x-show="metricsData">
             <template x-if="metricsData">
                 <div style="display: contents;">
@@ -439,6 +551,41 @@
                                 <li>
                                     <span class="metric-link" @click="openEntityPanel(e.id)" x-text="e.name"></span>
                                     <span class="metric-count" x-text="e.person_count + ' people'"></span>
+                                </li>
+                            </template>
+                        </ol>
+                    </div>
+                    <div>
+                        <h4>Top schools</h4>
+                        <ol>
+                            <template x-for="s in metricsData.top_schools" :key="s.id">
+                                <li x-data="{ open: false }">
+                                    <span class="metric-link" @click="open = !open" x-text="s.name"></span>
+                                    <span class="metric-count" x-text="s.alumni_count + ' alumni'"></span>
+                                    <ul class="metric-sublist" x-show="open">
+                                        <template x-for="a in s.alumni" :key="a.person_id">
+                                            <li><span class="metric-link" @click.stop="openPanel(a.person_id)" x-text="a.name"></span></li>
+                                        </template>
+                                    </ul>
+                                </li>
+                            </template>
+                        </ol>
+                    </div>
+                    <div>
+                        <h4>Top dynasties by wealth</h4>
+                        <ol>
+                            <template x-for="d in metricsData.dynasties" :key="d.label">
+                                <li x-data="{ open: false }">
+                                    <span class="metric-link" @click="open = !open" x-text="d.label"></span>
+                                    <span class="metric-count" x-text="formatWealth(d.total_worth_usd) + ' · ' + d.tracked_count + '/' + d.member_count + ' tracked'"></span>
+                                    <ul class="metric-sublist" x-show="open">
+                                        <template x-for="m in d.members" :key="m.person_id">
+                                            <li>
+                                                <span class="metric-link" @click.stop="openPanel(m.person_id)" x-text="m.name"></span>
+                                                <span class="muted small" x-text="m.net_worth_usd ? formatWealth(m.net_worth_usd) : 'untracked'"></span>
+                                            </li>
+                                        </template>
+                                    </ul>
                                 </li>
                             </template>
                         </ol>
@@ -713,7 +860,7 @@
     </main>
 
     <!-- Person Detail Side Panel -->
-    <div class="panel-overlay" x-show="panelOpen" @click="panelOpen = false" x-transition.opacity></div>
+    <div class="panel-overlay" x-show="panelOpen" @click="closePanel()" x-transition.opacity></div>
     <aside class="detail-panel" :class="{ open: panelOpen }">
         <template x-if="panelPerson">
             <div class="panel-content">
@@ -722,7 +869,7 @@
                         <h2 x-text="panelPerson.common_name"></h2>
                         <p class="muted" x-text="'#' + panelPerson.rank + ' · ' + (panelPerson.citizenship || '') + ' · Age ' + (panelPerson.age || '?')"></p>
                     </div>
-                    <button class="panel-close" @click="panelOpen = false">&times;</button>
+                    <button class="panel-close" @click="closePanel()">&times;</button>
                 </div>
 
                 <div class="panel-stats">
@@ -822,7 +969,7 @@
         </template>
     </aside>
 
-    <div class="panel-overlay" x-show="entityPanelOpen" @click="entityPanelOpen = false" x-transition.opacity></div>
+    <div class="panel-overlay" x-show="entityPanelOpen" @click="closeEntityPanel()" x-transition.opacity></div>
     <aside class="detail-panel" :class="{ open: entityPanelOpen }">
         <template x-if="entityPanel">
             <div class="panel-content">
@@ -831,10 +978,27 @@
                         <h2 x-text="entityPanel.name"></h2>
                         <p class="muted" x-text="(entityPanel.kind || 'entity') + (entityPanel.country ? ' · ' + entityPanel.country : '') + (entityPanel.inception_year ? ' · founded ' + entityPanel.inception_year : '')"></p>
                     </div>
-                    <button class="panel-close" @click="entityPanelOpen = false">&times;</button>
+                    <button class="panel-close" @click="closeEntityPanel()">&times;</button>
                 </div>
 
                 <p class="panel-summary" x-show="entityPanel.description" x-text="entityPanel.description"></p>
+
+                <div class="panel-stats" x-show="entityPanel.person_count">
+                    <div class="panel-stat">
+                        <span class="panel-stat-label">Tracked billionaires</span>
+                        <span class="panel-stat-value" x-text="entityPanel.person_count"></span>
+                    </div>
+                    <div class="panel-stat" x-show="entityPanel.aggregate_wealth_usd">
+                        <span class="panel-stat-label">Combined wealth</span>
+                        <span class="panel-stat-value" x-text="formatWealth(entityPanel.aggregate_wealth_usd)"></span>
+                    </div>
+                    <template x-if="entityPanel.related && entityPanel.related.length">
+                        <div class="panel-stat">
+                            <span class="panel-stat-label">Related entities</span>
+                            <span class="panel-stat-value" x-text="entityPanel.related.length"></span>
+                        </div>
+                    </template>
+                </div>
 
                 <div class="panel-section" x-show="entityPanel.industry || entityPanel.employee_count || entityPanel.revenue_usd || entityPanel.website">
                     <h4>Profile</h4>
@@ -849,11 +1013,13 @@
 
                 <div class="panel-section" x-show="entityPanel.people && entityPanel.people.length > 0">
                     <h4>Connected billionaires</h4>
-                    <ul>
+                    <ul class="entity-relation-list">
                         <template x-for="p in entityPanel.people" :key="p.person_id">
                             <li>
-                                <a href="#" @click.prevent="entityPanelOpen = false; openPanel(p.person_id)" x-text="p.name"></a>
-                                <span class="muted" x-text="' · ' + p.role"></span>
+                                <a href="#" @click.prevent="closeEntityPanel(); openPanel(p.person_id)" x-text="p.name"></a>
+                                <span class="muted small" x-show="p.net_worth_usd"
+                                      x-text="formatWealth(p.net_worth_usd) + (p.rank ? ' · #' + p.rank : '')"></span>
+                                <span class="relation-pill" x-text="humanizeRole(p.role)"></span>
                             </li>
                         </template>
                     </ul>
@@ -861,11 +1027,14 @@
 
                 <div class="panel-section" x-show="entityPanel.related && entityPanel.related.length > 0">
                     <h4>Related entities</h4>
-                    <ul>
+                    <p class="muted small">Things that link to this entity in Wikidata — including notable members or partners who aren't tracked billionaires.</p>
+                    <ul class="entity-relation-list">
                         <template x-for="r in entityPanel.related" :key="r.entity_id">
                             <li>
                                 <a href="#" @click.prevent="openEntityPanel(r.entity_id)" x-text="r.name"></a>
-                                <span class="muted" x-text="' · ' + r.kind + ' · ' + r.entity_kind"></span>
+                                <span class="muted small" x-show="r.person_count" x-text="r.person_count + ' billionaire' + (r.person_count === 1 ? '' : 's')"></span>
+                                <span class="relation-pill" x-text="humanizeRole(r.kind)"></span>
+                                <span class="muted small" x-text="humanizeKind(r.entity_kind)"></span>
                             </li>
                         </template>
                     </ul>
@@ -874,15 +1043,15 @@
         </template>
     </aside>
 
-    <script src="/js/format.js?v=1"></script>
-    <script src="/js/charts.js?v=1"></script>
-    <script src="/js/tabs/dashboard.js?v=1"></script>
-    <script src="/js/tabs/table.js?v=1"></script>
-    <script src="/js/tabs/analytics.js?v=2"></script>
+    <script src="/js/format.js?v=2"></script>
+    <script src="/js/charts.js?v=10"></script>
+    <script src="/js/tabs/dashboard.js?v=6"></script>
+    <script src="/js/tabs/table.js?v=2"></script>
+    <script src="/js/tabs/analytics.js?v=4"></script>
     <script src="/js/tabs/families.js?v=6"></script>
     <script src="/js/tabs/scraper.js?v=1"></script>
     <script src="/js/tabs/export.js?v=1"></script>
-    <script src="/js/tabs/panel.js?v=3"></script>
-    <script src="/app.js?v=26"></script>
+    <script src="/js/tabs/panel.js?v=5"></script>
+    <script src="/app.js?v=30"></script>
 </body>
 </html>

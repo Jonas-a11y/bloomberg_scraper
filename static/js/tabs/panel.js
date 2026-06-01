@@ -1,5 +1,44 @@
 // static/js/tabs/panel.js
 // Person + entity detail side panels (opens from table or graph clicks).
+
+// Wikidata role labels are machine-shaped — humanize them for display.
+// The map covers the common roles we emit; anything else gets underscores
+// turned into spaces as a sane fallback.
+const ROLE_LABELS = {
+    educated_at: 'studied at', alum_of: 'alum',
+    employer: 'works at', employs: 'employee',
+    member_of: 'member', includes: 'has member',
+    board_member: 'board member', board_of: 'board includes',
+    founded: 'founder', founded_by: 'founder',
+    chair: 'chair', chaired_by: 'chaired by',
+    owner_of: 'owner', owned_by: 'owner',
+    notable_work: 'created', created_by: 'creator',
+    political_party: 'party', has_member: 'member',
+    affiliated_with: 'affiliated',
+    participant_in: 'participated', had_participant: 'participant',
+    holds: 'holds shares', owns: 'owns',
+    subsidiary_of: 'subsidiary of', has_subsidiary: 'parent of',
+    part_of: 'part of', has_part: 'includes',
+};
+function humanizeRole(role) {
+    if (!role) return '';
+    return ROLE_LABELS[role] || role.replace(/_/g, ' ');
+}
+
+// Entity-kind labels for the related list. "other" reads as junk to a
+// reader, but in practice it's almost always a person Wikidata classifies
+// as P31=human — show that explicitly.
+const ENTITY_KIND_LABELS = {
+    company: 'company', school: 'school', board: 'board',
+    organization: 'organization', work: 'work', stock: 'stock',
+    private_company: 'private co.', party: 'political party',
+    place: 'place', position: 'position', award: 'award',
+    event: 'event', other: 'person',
+};
+function humanizeKind(kind) {
+    return ENTITY_KIND_LABELS[kind] || kind || 'entity';
+}
+
 function panelMixin() {
     return {
         panelOpen: false,
@@ -14,6 +53,8 @@ function panelMixin() {
 
         entityPanelOpen: false,
         entityPanel: null,
+
+        humanizeRole, humanizeKind,
 
         async openPanel(personId) {
             const [detail, history] = await Promise.all([
@@ -30,6 +71,7 @@ function panelMixin() {
                 private: detail.private_assets_json ? JSON.parse(detail.private_assets_json) : [],
             };
             this.panelOpen = true;
+            if (this.updateHash) this.updateHash({ person: personId, entity: null });
             this.$nextTick(() => this.renderPanelChart());
         },
 
@@ -37,6 +79,17 @@ function panelMixin() {
             const detail = await fetch(`/api/entities/${entityId}`).then(r => r.json());
             this.entityPanel = detail;
             this.entityPanelOpen = true;
+            if (this.updateHash) this.updateHash({ entity: entityId, person: null });
+        },
+
+        closePanel() {
+            this.panelOpen = false;
+            if (this.updateHash) this.updateHash({ person: null });
+        },
+
+        closeEntityPanel() {
+            this.entityPanelOpen = false;
+            if (this.updateHash) this.updateHash({ entity: null });
         },
 
         setPanelRange(range) {

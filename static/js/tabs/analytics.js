@@ -45,42 +45,10 @@ function analyticsMixin() {
         },
 
         renderConcentrationChart() {
-            const ctx = document.getElementById('concentrationChart');
-            if (!ctx || !this.concentrationData) return;
+            if (!this.concentrationData) return;
             const cutoff = this.concentrationCutoff(this.concentrationRange);
             const filtered = cutoff ? this.concentrationData.filter(d => d.date >= cutoff) : this.concentrationData;
-            const labels = filtered.map(d => d.date);
-            const top1Pct = filtered.map(d => d.total ? (d.top_1 / d.total) * 100 : 0);
-            const top10Pct = filtered.map(d => d.total ? (d.top_10 / d.total) * 100 : 0);
-            const top100Pct = filtered.map(d => d.total ? (d.top_100 / d.total) * 100 : 0);
-            if (this.chartInstances.concentrationChart) this.chartInstances.concentrationChart.destroy();
-            this.chartInstances.concentrationChart = new Chart(ctx, {
-                type: 'line',
-                data: {
-                    labels,
-                    datasets: [
-                        { label: 'Top 100', data: top100Pct, borderColor: '#6c5ce7', fill: false, tension: 0.1, pointRadius: 0 },
-                        { label: 'Top 10', data: top10Pct, borderColor: '#4ecdc4', fill: false, tension: 0.1, pointRadius: 0 },
-                        { label: 'Top 1', data: top1Pct, borderColor: '#ff6b6b', fill: false, tension: 0.1, pointRadius: 0 },
-                    ],
-                },
-                options: {
-                    responsive: true,
-                    animation: false,
-                    interaction: { mode: 'index', intersect: false },
-                    plugins: {
-                        tooltip: {
-                            callbacks: {
-                                label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(1)}%`,
-                            },
-                        },
-                    },
-                    scales: {
-                        x: { type: 'category', ticks: { maxTicksLimit: 12 } },
-                        y: { ticks: { callback: v => v.toFixed(0) + '%' } },
-                    },
-                },
-            });
+            renderConcentrationLine(this.chartInstances, 'concentrationChart', filtered);
         },
 
         async searchPeople() {
@@ -151,6 +119,7 @@ function analyticsMixin() {
                 data: { datasets },
                 options: {
                     responsive: true,
+                    maintainAspectRatio: false,
                     animation: false,
                     interaction: { mode: 'index', intersect: false },
                     plugins: {

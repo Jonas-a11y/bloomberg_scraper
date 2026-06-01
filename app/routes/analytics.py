@@ -4,6 +4,8 @@ from app.database import get_db, get_snapshot_dates
 
 router = APIRouter()
 
+_concentration_cache: dict = {}
+
 
 @router.get("/analytics/by-industry")
 def by_industry():
@@ -78,9 +80,17 @@ def snapshots():
 @router.get("/analytics/concentration")
 def concentration(min_count: int = 100):
     """Daily share of total wealth held by top 1 / 10 / 100 within the cohort
-    we have history for. Note: wealth_history only includes people who are
-    currently in the top 500, so historical top-N reflects today's survivors."""
+    we have history for. Note: wealth_history is built from profile pages of
+    persons known to the app at backfill time, so historical top-N skews toward
+    today's survivors — anyone who dropped off the list before we started
+    tracking them isn't represented. From now on, dropouts retain their history."""
     conn = get_db()
+    latest = conn.execute("SELECT MAX(scraped_at) FROM snapshots").fetchone()[0]
+    key = (latest, min_count)
+    cached = _concentration_cache.get(key)
+    if cached is not None:
+        conn.close()
+        return cached
     cursor = conn.execute("""
         WITH ranked AS (
             SELECT date, net_worth_usd,
@@ -100,6 +110,8 @@ def concentration(min_count: int = 100):
     """, (min_count,))
     rows = [dict(row) for row in cursor.fetchall()]
     conn.close()
+    _concentration_cache.clear()
+    _concentration_cache[key] = rows
     return rows
 
 

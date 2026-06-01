@@ -4,9 +4,10 @@
 
 function formatWealth(v) {
     if (!v) return '$0';
-    if (v >= 1e12) return `$${(v / 1e12).toFixed(1)}T`;
-    if (v >= 1e9) return `$${(v / 1e9).toFixed(1)}B`;
-    if (v >= 1e6) return `$${(v / 1e6).toFixed(1)}M`;
+    const fmt = (n) => Number.isInteger(n) ? n.toString() : n.toFixed(1);
+    if (v >= 1e12) return `$${fmt(v / 1e12)}T`;
+    if (v >= 1e9) return `$${fmt(v / 1e9)}B`;
+    if (v >= 1e6) return `$${fmt(v / 1e6)}M`;
     return `$${v.toLocaleString()}`;
 }
 

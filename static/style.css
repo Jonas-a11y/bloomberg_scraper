@@ -101,6 +101,12 @@ tbody tr:hover { background: #f8f9ff; }
 .aggregate-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .aggregate-card { background: white; padding: 16px; border-radius: 8px; border: 1px solid #e0e0e0; }
 .aggregate-card h3 { font-size: 13px; margin-bottom: 12px; }
+.chart-wrap { position: relative; height: 280px; }
+.chart-wrap-tall { height: 360px; }
+
+.smoothing-control { display: flex; align-items: center; gap: 8px; }
+.smoothing-control input[type=range] { width: 140px; accent-color: #4ecdc4; }
+.smoothing-control .smoothing-value { min-width: 32px; text-align: right; font-variant-numeric: tabular-nums; }
 
 .scraper-status-card, .schedule-card, .runs-card, .export-card {
     background: white; padding: 20px; border-radius: 8px; border: 1px solid #e0e0e0; margin-bottom: 16px;
@@ -278,6 +284,20 @@ h3 { font-size: 15px; margin-bottom: 12px; }
 .legend-swatch { display: inline-block; width: 14px; height: 3px; border-radius: 2px; }
 .legend-dot { display: inline-block; width: 10px; height: 10px; border-radius: 2px; }
 
+.entity-relation-list { list-style: none; padding: 0; margin: 8px 0 0; }
+.entity-relation-list li {
+    display: flex; align-items: center; gap: 8px;
+    padding: 4px 0; font-size: 13px;
+}
+.entity-relation-list li a { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.relation-pill {
+    flex: 0 0 auto;
+    background: #eef0f4; color: #1a1a2e;
+    padding: 2px 8px; border-radius: 10px;
+    font-size: 11px; font-weight: 500;
+}
+.small { font-size: 11px; }
+
 .path-finder {
     background: white; padding: 12px 16px; border-radius: 8px;
     border: 1px solid #e0e0e0; margin-bottom: 12px;
@@ -309,6 +329,29 @@ h3 { font-size: 15px; margin-bottom: 12px; }
 .metrics-card .metric-link { cursor: pointer; color: #1a1a2e; }
 .metrics-card .metric-link:hover { color: #0984e3; text-decoration: underline; }
 .metrics-card .metric-count { color: #888; font-size: 11px; margin-left: 4px; }
+.metrics-card .metric-sublist {
+    margin: 4px 0 8px 0; padding-left: 16px;
+    border-left: 2px solid #eef0f4; font-size: 12px;
+}
+.metrics-card .metric-sublist li { margin: 2px 0; display: flex; gap: 8px; align-items: center; }
+
+.metric-count { color: #888; font-size: 11px; margin-left: 4px; font-weight: normal; }
+.metric-sublist {
+    list-style: none; margin: 4px 0 0 0; padding: 0; font-size: 13px;
+}
+.metric-sublist li {
+    margin: 0; padding: 4px 0;
+    display: flex; gap: 8px; align-items: baseline;
+    border-bottom: 1px solid #f0f2f5;
+}
+.metric-sublist li:last-child { border-bottom: none; }
+.metric-sublist li > span:first-child { flex: 1; }
+
+.six-degrees-strip {
+    background: white; padding: 10px 16px; border-radius: 8px;
+    border: 1px solid #e0e0e0; margin-bottom: 12px; font-size: 13px;
+}
+.six-degrees-strip strong { font-size: 16px; color: #6c5ce7; }
 
 .compare-result {
     background: #fafbff; border: 1px solid #e0e6ff; border-radius: 8px;
@@ -324,3 +367,30 @@ h3 { font-size: 15px; margin-bottom: 12px; }
     padding: 1px 8px; font-size: 11px; margin: 0 2px;
 }
 .compare-result .compare-empty { color: #999; font-style: italic; }
+
+.movers-strip {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
+    margin-bottom: 16px;
+}
+.movers-col {
+    background: white; padding: 12px 16px; border-radius: 8px;
+    border: 1px solid #e0e0e0;
+}
+.movers-col h4 {
+    font-size: 11px; color: #888; text-transform: uppercase;
+    letter-spacing: 0.5px; margin-bottom: 8px;
+}
+.movers-col ul { list-style: none; padding: 0; margin: 0; }
+.movers-col li {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 4px 0; font-size: 13px; border-bottom: 1px solid #f0f0f0;
+}
+.movers-col li:last-child { border-bottom: none; }
+.movers-col .metric-link { cursor: pointer; color: #1a1a2e; }
+.movers-col .metric-link:hover { color: #0984e3; text-decoration: underline; }
+
+.column-picker {
+    background: white; border: 1px solid #e0e0e0; border-radius: 8px;
+    padding: 12px 16px; margin-bottom: 12px;
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 6px;
+}
