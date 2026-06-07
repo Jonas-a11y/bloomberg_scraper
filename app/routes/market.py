@@ -7,15 +7,37 @@ Primary source: Yahoo Screener (`yf.EquityQuery` + `yf.screen()`). Yahoo
 returns top public companies ranked by live market cap, filtered by
 `region` (ISO country) or `sector` (GICS).
 
-Secondary source: Wikidata SPARQL. When Yahoo's coverage is thin (small
-markets, recently IPO'd companies, region codes Yahoo doesn't map well
-for), we top up the result with publicly-listed Wikidata entities for
-the same country/industry — name, headquarters, optional ticker, and
-inception year. Wikidata-sourced rows have no live market cap; they're
-shown after the Yahoo results, marked with their source.
+Two quirks of Yahoo's screener we work around:
+
+  1. Per-quote rows from `screen()` carry `marketCap` and `currency` but
+     not `sector`/`industry` — those only live on the per-ticker `info`
+     endpoint. We enrich every row concurrently after screening
+     (`_enrich_with_sector`, ~2s for 100 tickers) so the sector
+     breakdown / treemap colors aren't 40% "Unknown".
+
+  2. Non-US listings report `marketCap` in their LOCAL currency
+     (e.g. SAP.DE → EUR, 7203.T → JPY) without converting to USD,
+     even though the field has no currency suffix. Comparing them
+     directly puts Toyota at $37T and Lasertec at $4T. We fetch live
+     FX rates from yfinance (`EURUSD=X` etc.) and convert in-place;
+     non-USD rows whose currency we can't price get dropped rather
+     than left at a misleading number. The same FX call serves the
+     by-country view (so a German company's EUR cap shows in USD)
+     and the by-industry view (so the global ranking is comparable).
+
+The `market` field on each quote (`us_market`, `de_market`,
+`dr_market` for depository receipts) discriminates primary listings
+from foreign shadows — cleaner than exchange-name string matching.
+
+Secondary source (Wikidata SPARQL): used ONLY when Yahoo returns zero
+results for a country/industry. Wikidata rows have no live market
+cap, so they're shown without sizing — fine as a "we know these exist
+but can't price them" fallback for tiny markets, but they shouldn't
+pollute the dataset when Yahoo has good coverage.
 """
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 from curl_cffi import requests as cffi_requests
@@ -89,31 +111,72 @@ COUNTRY_MAP = {
 }
 
 
-# Each region's primary stock exchange. We only keep listings on these
-# exchanges to avoid Yahoo's foreign-shadow tickers whose marketCap is
-# reported in the local currency disguised as USD.
-PRIMARY_EXCHANGES = {
-    "us": {"NasdaqGS", "NasdaqGM", "NasdaqCM", "NYSE", "NYSEAmerican", "NYSE Arca"},
-    "gb": {"LSE", "London"},
-    "de": {"XETRA", "Frankfurt"},
-    "fr": {"Paris", "Euronext Paris"},
-    "jp": {"Tokyo", "Osaka"},
-    "cn": {"Shanghai", "Shenzhen", "ShangHai"},
-    "in": {"NSE", "BSE", "Bombay"},
-    "ch": {"Swiss Exchange", "SIX"},
-    "nl": {"Amsterdam", "Euronext Amsterdam"},
-    "ca": {"Toronto", "TSX"},
-    "au": {"ASX", "Sydney"},
-    "it": {"Milan", "MIL"},
-    "es": {"Madrid", "MCE"},
-    "br": {"Sao Paulo", "B3"},
-    "hk": {"HKSE"},
-    "sa": {"Saudi"},
-    "mx": {"Mexico"},
-    "kr": {"KSE", "KOSDAQ"},
-    "tw": {"TPE", "Taiwan"},
-    "sg": {"Singapore", "SGX"},
-}
+# Each region's primary listing tag in Yahoo's `market` field. Anything
+# else (most importantly `dr_market`, depository receipts) is a foreign
+# shadow whose marketCap is reported in local currency disguised as USD.
+def _primary_market(region):
+    return f"{region}_market" if region else None
+
+
+# In-memory FX cache. Yahoo's screener reports `marketCap` in the
+# listing's `currency` (EUR for SAP.DE, JPY for 7203.T, …) WITHOUT
+# converting to USD even when downstream callers expect USD. We need
+# live FX to compare a EUR-listed company against a USD-listed one.
+_FX_TTL_SEC = 60 * 60  # refresh hourly; intraday FX moves don't matter
+_fx_cache = {"ts": 0.0, "rates": {"USD": 1.0}}
+
+
+def _fx_rates(currencies):
+    """Return {ccy: usd_per_unit} for the requested currencies, fetched
+    in one batched yfinance call. Cached for an hour. Anything we can't
+    price returns no entry — caller decides whether to drop the row."""
+    needed = {(c or "").upper() for c in currencies if c}
+    needed.discard("USD")
+    needed.discard("")
+    if not needed:
+        return _fx_cache["rates"]
+    fresh = (time.time() - _fx_cache["ts"]) < _FX_TTL_SEC
+    missing = needed - set(_fx_cache["rates"].keys())
+    if fresh and not missing:
+        return _fx_cache["rates"]
+
+    try:
+        import yfinance as yf
+    except ImportError:
+        return _fx_cache["rates"]
+
+    syms = " ".join(f"{c}USD=X" for c in (needed | missing))
+    try:
+        bundle = yf.Tickers(syms)
+        for c in (needed | missing):
+            ticker = bundle.tickers.get(f"{c}USD=X")
+            if not ticker:
+                continue
+            try:
+                price = ticker.fast_info.get("lastPrice")
+            except Exception:
+                price = None
+            if price and price > 0:
+                _fx_cache["rates"][c] = float(price)
+    except Exception as e:
+        logger.warning(f"FX fetch failed: {e}")
+    _fx_cache["ts"] = time.time()
+    return _fx_cache["rates"]
+
+
+def _to_usd(cap, currency, rates):
+    """Convert a market cap to USD using the rate table from _fx_rates.
+    Returns None if the currency is unknown — caller drops the row
+    rather than reporting a misleading number."""
+    if cap is None:
+        return None
+    ccy = (currency or "").upper()
+    if not ccy or ccy == "USD":
+        return cap
+    rate = rates.get(ccy)
+    if not rate:
+        return None
+    return cap * rate
 
 
 def _yf_region(country):
@@ -191,38 +254,52 @@ def _cache_put(key, payload):
     _cache[key] = (time.time(), payload)
 
 
-def _enrich_with_sector(rows, max_lookups=30):
-    """Yahoo's screen API returns market caps but no sector/industry —
-    those live on the per-ticker `info` endpoint. Fetch in batch for the
-    top N rows so the sector breakdown chart has data without paying the
-    cost for every row.
+def _enrich_with_sector(rows, max_workers=30):
+    """Yahoo's `screen()` payload carries marketCap but not sector — those
+    only live on the per-ticker `info` endpoint. Fanned out concurrently
+    so 100 tickers complete in ~2s instead of ~30s sequentially.
 
     Per-ticker results are cached at the module level so subsequent
-    panel opens are free. We only enrich the top `max_lookups` so the
-    first response stays under ~3 seconds even on a cold cache."""
+    panel opens are free."""
     try:
         import yfinance as yf
     except ImportError:
         return rows
 
-    for row in rows[:max_lookups]:
+    # Collect tickers that still need enrichment, deduped — same ticker
+    # can appear twice across multi-region merges and we only want to
+    # fetch each once per cache window.
+    todo = []
+    for row in rows:
         ticker = row.get("ticker")
         if not ticker or row.get("sector"):
             continue
         info_key = ("info", ticker)
-        cached = _cached(info_key, ttl_sec=_CACHE_TTL_SEC)
-        if cached is None:
-            try:
-                info = yf.Ticker(ticker).info
-                cached = {
-                    "sector": info.get("sector"),
-                    "industry": info.get("industry"),
-                    "country": info.get("country"),
-                }
-                _cache_put(info_key, cached)
-            except Exception:
-                cached = {}
-                _cache_put(info_key, cached)
+        if _cached(info_key) is None:
+            todo.append(ticker)
+    todo = list(dict.fromkeys(todo))  # preserve order, dedupe
+
+    def _fetch(t):
+        try:
+            info = yf.Ticker(t).info
+            return t, {
+                "sector": info.get("sector"),
+                "industry": info.get("industry"),
+                "country": info.get("country"),
+            }
+        except Exception:
+            return t, {}
+
+    if todo:
+        with ThreadPoolExecutor(max_workers=min(max_workers, len(todo))) as ex:
+            for t, data in ex.map(_fetch, todo):
+                _cache_put(("info", t), data)
+
+    for row in rows:
+        ticker = row.get("ticker")
+        if not ticker:
+            continue
+        cached = _cached(("info", ticker)) or {}
         if cached:
             row["sector"] = cached.get("sector") or row.get("sector")
             row["industry"] = cached.get("industry") or row.get("industry")
@@ -230,16 +307,21 @@ def _enrich_with_sector(rows, max_lookups=30):
     return rows
 
 
-def _yf_screen(region=None, sector=None, limit=25):
+def _yf_screen(region=None, sector=None, limit=25, min_market_cap=1_000_000_000):
     """Query Yahoo Screener for equities matching the filters, ranked
-    by market cap descending. Returns a list of normalized dicts."""
+    by market cap descending. Returns a list of normalized dicts with
+    market caps converted to USD.
+
+    Yahoo caps `size` at 250 per call, so for `limit > 250` we
+    paginate via the `offset` argument. We bail out as soon as a page
+    comes back short — that's the natural EOF signal."""
     try:
         import yfinance as yf
     except ImportError:
         logger.warning("yfinance not installed; market endpoints disabled")
         return []
 
-    filters = [yf.EquityQuery("gt", ["intradaymarketcap", 1_000_000_000])]
+    filters = [yf.EquityQuery("gt", ["intradaymarketcap", min_market_cap])]
     if region:
         filters.append(yf.EquityQuery("eq", ["region", region]))
     if sector:
@@ -250,81 +332,57 @@ def _yf_screen(region=None, sector=None, limit=25):
     else:
         query = yf.EquityQuery("and", filters)
 
-    try:
-        result = yf.screen(
-            query,
-            sortField="intradaymarketcap",
-            sortAsc=False,
-            size=min(limit, 250),
-        )
-    except Exception as e:
-        logger.warning(f"yfinance screener failed: {e}")
+    PAGE = 250
+    quotes = []
+    remaining = limit
+    offset = 0
+    while remaining > 0:
+        page_size = min(remaining, PAGE)
+        try:
+            result = yf.screen(
+                query,
+                sortField="intradaymarketcap",
+                sortAsc=False,
+                size=page_size,
+                offset=offset,
+            )
+        except Exception as e:
+            logger.warning(f"yfinance screener failed at offset={offset}: {e}")
+            break
+        page_quotes = result.get("quotes") if isinstance(result, dict) else []
+        if not page_quotes:
+            break
+        quotes.extend(page_quotes)
+        if len(page_quotes) < page_size:
+            break  # natural end of results
+        remaining -= page_size
+        offset += page_size
+    if not quotes:
         return []
 
-    quotes = result.get("quotes") if isinstance(result, dict) else []
+    # When we asked for a specific region, filter out depository
+    # receipts and other non-primary listings. Yahoo's `market` field
+    # tags primary listings as `<region>_market` and DRs as `dr_market`.
+    primary = _primary_market(region)
+    if primary:
+        quotes = [q for q in quotes if q.get("market") == primary]
 
-    def _normalize_name(s):
-        if not s:
-            return ""
-        n = s.upper()
-        for suffix in (" CORPORATION", " CORP.", " CORP", " INC.", " INC",
-                       " LIMITED", " LTD.", " LTD", " HOLDINGS", " HOLDING",
-                       " GROUP", " PLC", " AG", " S.A.", " SA", " SE",
-                       " SPA", " S.P.A.", " N.V.", " NV", " AB", " CO."):
-            if n.endswith(suffix):
-                n = n[: -len(suffix)].strip()
-        return n.strip(",").strip()
-
-    # Two-pass: first collect all candidates per normalized name, then
-    # pick the best representative per company. Best = USD-currency
-    # listing (avoids foreign-listed shadows whose marketCap field is
-    # quoted in local currency disguised as USD), with smallest plausible
-    # market cap among USD options (deduplicates ADR vs primary).
-    by_norm = {}
-    for q in (quotes or []):
-        cap = q.get("marketCap")
-        if not cap or cap > 20_000_000_000_000:
-            continue
-        raw_name = q.get("longName") or q.get("shortName") or q.get("symbol") or ""
-        norm = _normalize_name(raw_name)
-        if not norm:
-            continue
-        currency = (q.get("currency") or "").upper()
-        prev = by_norm.get(norm)
-        if prev is None:
-            by_norm[norm] = q
-            continue
-        # Prefer USD listing
-        prev_currency = (prev.get("currency") or "").upper()
-        if currency == "USD" and prev_currency != "USD":
-            by_norm[norm] = q
-            continue
-        if prev_currency == "USD" and currency != "USD":
-            continue
-        # Both USD or both non-USD: prefer the larger ticker-suffix-free
-        # symbol (e.g. NVDA over NVDA.MX). Heuristic but works for most.
-        prev_sym = prev.get("symbol", "")
-        new_sym = q.get("symbol", "")
-        if "." in prev_sym and "." not in new_sym:
-            by_norm[norm] = q
+    # Fetch FX rates once for every currency present in the response,
+    # in a single batched call.
+    rates = _fx_rates({q.get("currency") for q in quotes})
 
     out = []
-    primary_xchs = PRIMARY_EXCHANGES.get(region, set()) if region else None
-    for q in by_norm.values():
-        cap = q.get("marketCap")
+    for q in quotes:
+        cap_local = q.get("marketCap")
         currency = (q.get("currency") or "").upper()
-        exchange = q.get("fullExchangeName", "")
-        # If we asked for a specific region, only trust listings on that
-        # region's primary exchanges. This filters out the foreign-listed
-        # shadow tickers (NVDA on Mexico, Apple on London, etc.) whose
-        # marketCap is reported in the local currency mislabeled as USD.
-        if primary_xchs and exchange and exchange not in primary_xchs:
-            # Best-effort substring match for variants Yahoo names
-            if not any(p.lower() in exchange.lower() for p in primary_xchs):
-                continue
-        # Final sanity: a non-USD listing's marketCap is usually wrong;
-        # filter ones > $5T entirely.
-        if currency and currency != "USD" and cap > 5_000_000_000_000:
+        cap_usd = _to_usd(cap_local, currency, rates)
+        if cap_usd is None or cap_usd <= 0:
+            continue
+        # Sanity ceiling — anything above $10T is almost certainly a
+        # data glitch (Yahoo occasionally returns inflated caps for
+        # ETFs and depository receipts that slipped through the
+        # market-tag filter).
+        if cap_usd > 10_000_000_000_000:
             continue
         out.append({
             "ticker": q.get("symbol"),
@@ -332,9 +390,16 @@ def _yf_screen(region=None, sector=None, limit=25):
             "sector": q.get("sector"),
             "industry": q.get("industry"),
             "country": q.get("region") or q.get("country"),
-            "market_cap_usd": cap,
+            "market_cap_usd": cap_usd,
             "price": q.get("regularMarketPrice"),
-            "currency": q.get("currency"),
+            "currency": currency or None,
+            # `financialCurrency` is the company's reporting currency
+            # — a cheap-but-decent home-country signal, since foreign
+            # mirror listings (NVD.DE, APC.DE) report in USD while
+            # actual local companies (SAP.DE, SIE.DE) report in EUR.
+            # Used by the country deep-dive to pre-filter before the
+            # expensive `info` enrichment.
+            "financial_currency": (q.get("financialCurrency") or "").upper() or None,
             "exchange": q.get("fullExchangeName"),
             "source": "yahoo",
         })
@@ -419,28 +484,11 @@ def _wikidata_companies(country_qid=None, industry_qid=None, limit=25):
     return out
 
 
-def _merge_sources(yahoo_rows, wikidata_rows, limit):
-    """Yahoo rows come first (they have market cap, ranked). Wikidata
-    rows fill remaining slots, deduped by ticker / name."""
-    seen_tickers = {r["ticker"] for r in yahoo_rows if r.get("ticker")}
-    seen_names_lower = {(r["name"] or "").lower() for r in yahoo_rows}
-    out = list(yahoo_rows)
-    for r in wikidata_rows:
-        if r.get("ticker") and r["ticker"] in seen_tickers:
-            continue
-        if (r.get("name") or "").lower() in seen_names_lower:
-            continue
-        out.append(r)
-        if len(out) >= limit:
-            break
-    return out[:limit]
-
-
 @router.get("/market/by-country")
 def market_by_country(country: str, limit: int = 25):
     """Top public companies headquartered in `country`. Yahoo Screener
-    primary source; Wikidata fills gaps when Yahoo's coverage is thin
-    (small markets) or returns no results."""
+    primary source; Wikidata used as a fallback only when Yahoo returned
+    nothing (small markets like Liechtenstein)."""
     cache_key = ("by-country", country, limit)
     hit = _cached(cache_key)
     if hit is not None:
@@ -448,15 +496,66 @@ def market_by_country(country: str, limit: int = 25):
 
     region = _yf_region(country)
     qid = _country_qid(country)
-    yahoo = _yf_screen(region=region, limit=max(limit, 50)) if region else []
-    wikidata = []
-    if len(yahoo) < limit:
-        # Top up from Wikidata
-        wikidata = _wikidata_companies(country_qid=qid, limit=max(limit * 2, 50)) if qid else []
-    companies = _merge_sources(yahoo, wikidata, limit)
-    # Enrich top results with sector/industry from Yahoo's per-ticker
-    # info endpoint so the sector breakdown chart isn't all "Unknown".
-    companies = _enrich_with_sector(companies)
+    # Pull a generous oversample. For non-US countries, only a small
+    # fraction of region=XX listings are real local companies — the
+    # top of the list is dominated by foreign mirrors. We paginate to
+    # 2000 rows and lower the cap floor to $100M so DAX/MDAX names
+    # surface; for the US case (where almost all results are real US
+    # companies) we cap at 250 to keep things fast.
+    if region == "us":
+        yahoo = _yf_screen(region=region, limit=250)
+    elif region:
+        yahoo = _yf_screen(region=region, limit=2000, min_market_cap=100_000_000)
+    else:
+        yahoo = []
+
+    # Pass 1 (cheap): drop the obvious foreign mirrors via
+    # `financial_currency`. Real local companies report financials in
+    # the local currency; foreign mirrors report in USD (or their HQ
+    # currency). For non-eurozone this is conclusive; for eurozone it
+    # narrows ~750 → ~150, leaving the per-ticker `info` filter to
+    # disambiguate Germany from France/Netherlands/Italy.
+    REGION_FC = {
+        "us": {"USD"}, "gb": {"GBP", "GBp"}, "de": {"EUR"}, "fr": {"EUR"},
+        "jp": {"JPY"}, "cn": {"CNY", "HKD"}, "in": {"INR"}, "ch": {"CHF"},
+        "nl": {"EUR"}, "ca": {"CAD", "USD"}, "kr": {"KRW"}, "tw": {"TWD"},
+        "it": {"EUR"}, "es": {"EUR"}, "br": {"BRL"}, "hk": {"HKD"},
+        "sa": {"SAR"}, "mx": {"MXN"}, "au": {"AUD"}, "se": {"SEK"},
+        "no": {"NOK"}, "dk": {"DKK"},
+    }
+    accept_fc = REGION_FC.get(region)
+    if accept_fc and yahoo:
+        yahoo = [
+            c for c in yahoo
+            if not c.get("financial_currency")
+            or c.get("financial_currency") in accept_fc
+        ]
+
+    # Pass 2 (accurate): enrich with HQ via `info.country`, then keep
+    # only those whose HQ matches this country. Catches the eurozone
+    # cross-listings the cheap filter couldn't (ASML.DE → Netherlands
+    # not Germany).
+    if region and yahoo:
+        # The cheap pass has already cut foreign-currency mirrors;
+        # the survivors are mostly real candidates. Cap at 300 to
+        # bound enrichment cost — already sorted by market cap, so
+        # we keep the megacaps that matter.
+        yahoo = yahoo[:300]
+        yahoo = _enrich_with_sector(yahoo)
+        country_lc = country.lower()
+        yahoo = [
+            c for c in yahoo
+            if (c.get("country") or "").lower() == country_lc
+        ]
+    # Wikidata only when Yahoo found nothing — small markets like
+    # Liechtenstein. When Yahoo had results, mixing in zero-cap
+    # Wikidata rows muddies both the count and the treemap.
+    if not yahoo and qid:
+        companies = _wikidata_companies(country_qid=qid, limit=limit)
+        companies = _enrich_with_sector(companies)
+    else:
+        # Already enriched above; just trim.
+        companies = yahoo[:limit]
 
     if not companies:
         return {
@@ -509,76 +608,76 @@ def market_by_industry(industry: str, limit: int = 25):
     sector = INDUSTRY_TO_YF_SECTOR.get(industry, industry)
     qid = INDUSTRY_TO_WIKIDATA_QID.get(industry)
 
-    # Querying Yahoo Screener with sector but NO region returns broken
-    # foreign-listed shadow tickers whose marketCap is reported in the
-    # local currency disguised as USD ($19T NVDA on Colombian exchange).
-    # We screen each major market separately, keep only the listings on
-    # that region's primary exchanges, and merge by company name —
-    # preferring USD-quoted entries (which Yahoo's screener handles
-    # correctly) when the same name appears in multiple regions.
+    # Yahoo won't filter by sector globally — sweep major markets
+    # individually. The same company appears in multiple region
+    # screens as primary + foreign mirrors (NVDA on us, NVD.DE on de,
+    # ASML.AS on nl, ASML.SW on ch). We pin each row to the region we
+    # screened it from, then after sector enrichment drops the rows
+    # whose home-country doesn't match — that's the cheapest reliable
+    # way to keep one listing per company without a brittle name match.
     yahoo_combined = []
     if sector:
+        per_region = max(20, limit // 2)
         for region_code in ("us", "gb", "de", "fr", "jp", "cn", "in",
                             "ch", "nl", "ca", "kr", "tw"):
-            partial = _yf_screen(
-                region=region_code, sector=sector, limit=15,
-            )
-            yahoo_combined.extend(partial)
+            rows = _yf_screen(region=region_code, sector=sector, limit=per_region)
+            for r in rows:
+                r["_screen_region"] = region_code
+            yahoo_combined.extend(rows)
 
-        # Cross-region dedupe by normalized name. Tie-breakers:
-        #  1. USD-quoted listing wins (the only currency Yahoo handles
-        #     correctly for marketCap).
-        #  2. No `.` in the symbol (primary US listing wins over ADRs).
-        def _norm(name):
-            n = (name or "").upper()
-            for suffix in (" CORPORATION", " CORP.", " CORP", " INC.", " INC",
-                           " LIMITED", " LTD.", " LTD", " HOLDINGS", " GROUP",
-                           " PLC", " AG", " S.A.", " SA", " SE", " CO."):
-                if n.endswith(suffix):
-                    n = n[: -len(suffix)].strip()
-            return n.strip(",").strip()
-
-        best = {}
+        # Cheap pass: dedupe by ticker — the same listing sometimes
+        # surfaces in two region screens.
+        by_ticker = {}
         for c in yahoo_combined:
-            key = _norm(c.get("name"))
-            if not key:
-                continue
-            prev = best.get(key)
-            if prev is None:
-                best[key] = c
-                continue
-            new_usd = (c.get("currency") or "").upper() == "USD"
-            prev_usd = (prev.get("currency") or "").upper() == "USD"
-            if new_usd and not prev_usd:
-                best[key] = c
-                continue
-            if prev_usd and not new_usd:
-                continue
-            new_clean = "." not in (c.get("ticker") or "")
-            prev_clean = "." not in (prev.get("ticker") or "")
-            if new_clean and not prev_clean:
-                best[key] = c
-                continue
-        yahoo_combined = sorted(
-            best.values(),
-            key=lambda x: -(x.get("market_cap_usd") or 0),
-        )[:max(limit, 50)]
-        # Non-USD listings have their marketCap in local currency
-        # disguised as USD. Without an FX conversion step (slow,
-        # rate-limited) they'd inflate the rankings — Lasertec at
-        # JPY 3,800B = $24B, not $3,800B. Drop them from this view;
-        # the country deep-dive shows local primary listings on
-        # their own.
-        yahoo_combined = [
-            c for c in yahoo_combined
-            if (c.get("currency") or "").upper() == "USD"
-        ]
+            t = c.get("ticker")
+            if t and t not in by_ticker:
+                by_ticker[t] = c
+        yahoo_combined = list(by_ticker.values())
 
-    wikidata = []
-    if len(yahoo_combined) < limit:
-        wikidata = _wikidata_companies(industry_qid=qid, limit=max(limit * 2, 50)) if qid else []
-    companies = _merge_sources(yahoo_combined, wikidata, limit)
-    companies = _enrich_with_sector(companies)
+    # Enrich with sector + home country before the home-region filter.
+    # `_enrich_with_sector` fills `country` from yfinance's per-ticker
+    # `info` payload (NVDA → "United States"; NVD.DE → "United States"
+    # too — yfinance gives the company's HQ, not the listing
+    # exchange). That's exactly what we need.
+    yahoo_combined = _enrich_with_sector(yahoo_combined)
+
+    if sector and yahoo_combined:
+        # Keep only rows whose company HQ matches the region we
+        # screened them from. NVDA (HQ=US, screened on us) ✓.
+        # NVD.DE (HQ=US, screened on de) ✗ — already represented
+        # by NVDA. ASML.AS (HQ=NL, screened on nl) ✓; ASML.SW
+        # (HQ=NL, screened on ch) ✗.
+        YF_REGION_TO_COUNTRY = {v[0]: k for k, v in COUNTRY_MAP.items()}
+        def _match_home(row):
+            r = row.get("_screen_region")
+            home = (row.get("country") or "").strip()
+            if not home:
+                # No HQ info — fall back to the looser USD-currency
+                # signal so we don't drop everything.
+                return (row.get("currency") or "").upper() == "USD" and r == "us"
+            expected = YF_REGION_TO_COUNTRY.get(r)
+            if not expected:
+                return False
+            # Yahoo's `country` can be a name or an ISO code — match either.
+            return home.lower() == expected.lower() or home.lower() == r
+
+        yahoo_combined = [c for c in yahoo_combined if _match_home(c)]
+        # Sort by USD market cap and trim
+        yahoo_combined.sort(key=lambda x: -(x.get("market_cap_usd") or 0))
+        yahoo_combined = yahoo_combined[:limit]
+        # Drop the internal field before returning
+        for c in yahoo_combined:
+            c.pop("_screen_region", None)
+
+    # Only fall back to Wikidata when Yahoo returned NOTHING. Mixing
+    # zero-cap Wikidata rows with Yahoo rows pollutes the treemap
+    # (zero-area tiles); when the treemap can't be built we want the
+    # Wikidata list as the primary view, surfaced via the panel's
+    # opt-in list toggle.
+    companies = yahoo_combined
+    if not companies and qid:
+        companies = _wikidata_companies(industry_qid=qid, limit=limit)
+        companies = _enrich_with_sector(companies)
 
     if not companies:
         return {
