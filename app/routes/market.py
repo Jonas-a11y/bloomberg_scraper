@@ -191,7 +191,7 @@ def _cache_put(key, payload):
     _cache[key] = (time.time(), payload)
 
 
-def _enrich_with_sector(rows, max_lookups=10):
+def _enrich_with_sector(rows, max_lookups=30):
     """Yahoo's screen API returns market caps but no sector/industry —
     those live on the per-ticker `info` endpoint. Fetch in batch for the
     top N rows so the sector breakdown chart has data without paying the

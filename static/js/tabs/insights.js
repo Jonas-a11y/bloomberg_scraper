@@ -423,6 +423,148 @@ function _drawRaceFrame(now) {
     }
 }
 
+// ─── Treemap renderer (squarified) ─────────────────────────────────
+// Used by the deep-dive panel's Public market tab. Canvas-based to
+// avoid pulling in chartjs-chart-treemap as a dependency. Tile size =
+// market cap, color = sector, label = ticker (or initials when the
+// tile is too small for the ticker to fit).
+
+// Squarified treemap: greedy algorithm by Bruls/Huijing/van Wijk.
+// Items must be pre-sorted by value descending. We split the rect
+// into rows that minimize aspect ratio.
+function _squarifyTreemap(items, x, y, w, h) {
+    const out = [];
+    const total = items.reduce((s, i) => s + (i.value || 0), 0);
+    if (total <= 0 || items.length === 0) return out;
+
+    function _layoutRow(row, sideShort, sideLong, startX, startY, vert) {
+        const rowSum = row.reduce((s, i) => s + i.value, 0);
+        const rowThickness = rowSum / sideLong;
+        let cursor = 0;
+        for (const item of row) {
+            const itemLen = item.value / rowThickness;
+            const tile = vert ? {
+                x: startX,
+                y: startY + cursor,
+                w: rowThickness,
+                h: itemLen,
+            } : {
+                x: startX + cursor,
+                y: startY,
+                w: itemLen,
+                h: rowThickness,
+            };
+            out.push({ item: item.item, ...tile });
+            cursor += itemLen;
+        }
+        return rowThickness;
+    }
+
+    function _worstRatio(row, side) {
+        const sum = row.reduce((s, i) => s + i.value, 0);
+        if (sum <= 0) return Infinity;
+        const minV = Math.min(...row.map(i => i.value));
+        const maxV = Math.max(...row.map(i => i.value));
+        return Math.max(
+            (side * side * maxV) / (sum * sum),
+            (sum * sum) / (side * side * minV),
+        );
+    }
+
+    // Scale items so total area = w*h
+    const scale = (w * h) / total;
+    const scaled = items.map(i => ({
+        item: i,
+        value: (i.value || 0) * scale,
+    })).filter(i => i.value > 0);
+
+    let curX = x, curY = y, remW = w, remH = h;
+    let row = [];
+    let i = 0;
+    while (i < scaled.length) {
+        const item = scaled[i];
+        const sideShort = Math.min(remW, remH);
+        if (sideShort <= 0) break;
+        const sideLong = Math.max(remW, remH);
+        const candidate = [...row, item];
+        const candidateWorst = _worstRatio(candidate, sideShort);
+        const currentWorst = row.length ? _worstRatio(row, sideShort) : Infinity;
+        if (row.length === 0 || candidateWorst <= currentWorst) {
+            row = candidate;
+            i++;
+        } else {
+            // Lay out current row, advance origin
+            const vert = remW > remH;  // vertical row when wider than tall
+            const thickness = _layoutRow(row, sideShort, sideLong, curX, curY, vert);
+            if (vert) {
+                curX += thickness; remW -= thickness;
+            } else {
+                curY += thickness; remH -= thickness;
+            }
+            row = [];
+        }
+    }
+    if (row.length) {
+        const sideShort = Math.min(remW, remH);
+        const sideLong = Math.max(remW, remH);
+        const vert = remW > remH;
+        _layoutRow(row, sideShort, sideLong, curX, curY, vert);
+    }
+    return out;
+}
+
+function _drawMarketTreemap(canvas, companies) {
+    if (!canvas || !companies || !companies.length) return [];
+    const ctx = canvas.getContext('2d');
+    const dpr = window.devicePixelRatio || 1;
+    const cssW = canvas.clientWidth, cssH = canvas.clientHeight;
+    if (canvas.width !== cssW * dpr || canvas.height !== cssH * dpr) {
+        canvas.width = cssW * dpr; canvas.height = cssH * dpr;
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+    ctx.clearRect(0, 0, cssW, cssH);
+
+    // Build the items: only rows with positive market cap. Wikidata
+    // rows (no live cap) are appended at the bottom as small same-
+    // sized tiles so the user still sees them as "we know about it".
+    const withCap = companies.filter(c => (c.market_cap_usd || 0) > 0);
+    const items = withCap.map(c => ({
+        ...c,
+        value: c.market_cap_usd,
+    }));
+    if (!items.length) return [];
+
+    const tiles = _squarifyTreemap(items, 0, 0, cssW, cssH);
+
+    for (const tile of tiles) {
+        const c = tile.item;
+        const color = _industryColor(c.sector || c.industry || 'Other');
+        ctx.fillStyle = color;
+        ctx.fillRect(tile.x, tile.y, tile.w, tile.h);
+        ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(tile.x + 0.5, tile.y + 0.5, tile.w - 1, tile.h - 1);
+
+        // Label: ticker if it fits, else initials, else nothing
+        if (tile.w < 22 || tile.h < 16) continue;
+        const ticker = c.ticker || (c.name || '?').slice(0, 4).toUpperCase();
+        ctx.fillStyle = '#1a1a2e';
+        ctx.font = '600 11px -apple-system, "Segoe UI", sans-serif';
+        ctx.textBaseline = 'top';
+        ctx.textAlign = 'left';
+        ctx.fillText(ticker, tile.x + 4, tile.y + 4);
+        // Cap underneath when there's room
+        if (tile.h >= 32 && tile.w >= 50) {
+            ctx.font = '500 10px -apple-system, sans-serif';
+            ctx.fillStyle = 'rgba(26,26,46,0.7)';
+            const cap = (c.market_cap_usd || 0) / 1e9;
+            const capStr = cap >= 1000 ? `$${(cap / 1000).toFixed(1)}T` : `$${cap.toFixed(0)}B`;
+            ctx.fillText(capStr, tile.x + 4, tile.y + 18);
+        }
+    }
+    return tiles;
+}
+
 function insightsMixin() {
     return {
         // ─── Cross-filter state ──────────────────────────────────────────
@@ -460,6 +602,8 @@ function insightsMixin() {
         deepDiveLoading: false,
         deepDiveBillionaires: null,
         deepDiveMarket: null,
+        deepDiveShowList: false,   // treemap is the primary view; list is opt-in
+        _deepDiveTreemapTiles: null,
 
         // ─── Loaders ─────────────────────────────────────────────────────
         async loadInsights() {
@@ -846,6 +990,7 @@ function insightsMixin() {
             this.deepDiveBillionaires = null;
             this.deepDiveMarket = null;
             this.deepDiveLoading = true;
+            this.deepDiveShowList = false;   // hide the row list on each open
             // Load billionaires synchronously (fast, our DB) and market in
             // the background — Yahoo can take a few seconds for a cold
             // cache, no point making the user wait.
@@ -900,13 +1045,58 @@ function insightsMixin() {
         async fetchDeepDiveMarket() {
             this.deepDiveMarket = { loading: true };
             const path = this.deepDiveKind === 'country'
-                ? `/api/market/by-country?country=${encodeURIComponent(this.deepDiveValue)}&limit=15`
-                : `/api/market/by-industry?industry=${encodeURIComponent(this.deepDiveValue)}&limit=15`;
+                ? `/api/market/by-country?country=${encodeURIComponent(this.deepDiveValue)}&limit=100`
+                : `/api/market/by-industry?industry=${encodeURIComponent(this.deepDiveValue)}&limit=100`;
             try {
                 const data = await fetch(path).then(r => r.json());
                 this.deepDiveMarket = data;
+                // Treemap is the primary view of the market tab; render on
+                // the next tick so the canvas is in the DOM.
+                this.$nextTick(() => this.renderDeepDiveTreemap());
             } catch (e) {
                 this.deepDiveMarket = { error: String(e) };
+            }
+        },
+
+        renderDeepDiveTreemap() {
+            const canvas = document.getElementById('deepDiveTreemap');
+            if (!canvas || !this.deepDiveMarket?.companies) return;
+            this._deepDiveTreemapTiles = _drawMarketTreemap(
+                canvas, this.deepDiveMarket.companies,
+            );
+            // Wire up hover + click. We re-bind on every render — the
+            // canvas instance is the same so we use a flag to attach
+            // listeners once.
+            if (!canvas._hoverWired) {
+                canvas._hoverWired = true;
+                canvas.addEventListener('mousemove', (e) => {
+                    const rect = canvas.getBoundingClientRect();
+                    const x = e.clientX - rect.left, y = e.clientY - rect.top;
+                    const tiles = this._deepDiveTreemapTiles || [];
+                    const hit = tiles.find(t =>
+                        x >= t.x && x <= t.x + t.w && y >= t.y && y <= t.y + t.h
+                    );
+                    canvas.style.cursor = hit?.item.ticker ? 'pointer' : 'default';
+                    if (hit) canvas.title = `${hit.item.name} (${hit.item.ticker || '—'}) · ${formatWealth(hit.item.market_cap_usd || 0)} · ${hit.item.sector || 'Other'}`;
+                });
+                canvas.addEventListener('click', (e) => {
+                    const rect = canvas.getBoundingClientRect();
+                    const x = e.clientX - rect.left, y = e.clientY - rect.top;
+                    const tiles = this._deepDiveTreemapTiles || [];
+                    const hit = tiles.find(t =>
+                        x >= t.x && x <= t.x + t.w && y >= t.y && y <= t.y + t.h
+                    );
+                    if (hit?.item.ticker) {
+                        window.open(`https://finance.yahoo.com/quote/${hit.item.ticker}`,
+                                    '_blank', 'noopener');
+                    }
+                });
+                // Re-render on resize
+                let resizeTimer;
+                window.addEventListener('resize', () => {
+                    clearTimeout(resizeTimer);
+                    resizeTimer = setTimeout(() => this.renderDeepDiveTreemap(), 200);
+                });
             }
         },
     };
