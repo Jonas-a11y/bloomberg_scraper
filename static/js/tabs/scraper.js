@@ -1,4 +1,8 @@
 // static/js/tabs/scraper.js
+// Single control surface for every data-loading action: daily Bloomberg
+// scrape, the one-time backfills (wealth history, Wikipedia news,
+// Forbes via Wikipedia, Forbes via Kaggle, Wikidata network refresh),
+// and the cron schedule.
 function scraperMixin() {
     return {
         scraperStatus: { status: 'idle', next_run: null, last_success: null },
@@ -9,26 +13,44 @@ function scraperMixin() {
         syncMessage: '',
         schedule: { times: ['08:00'], timezone: 'UTC', enabled: true },
 
+        // ─── New: jobs added since the original Scraper panel ──────────
+        // News refresh — pulls GDELT news for the last 30d
+        newsRefresh: { running: false, done: 0, total: 0, errors: 0, saved: 0 },
+        // News backfill — Wikipedia citations historical timeline
+        newsBackfill: { running: false, done: 0, total: 0, errors: 0, saved: 0, current: null },
+        // Forbes Wikipedia scrape (legacy fallback) and Kaggle import
+        forbesWikiBusy: false,
+        forbesWikiMessage: '',
+        forbesKaggleBusy: false,
+        forbesKaggleMessage: '',
+        // Wikidata network refresh — rebuilds family/entity/holdings graph
+        networkRefresh: { running: false, stage: '', done: 0, total: 0 },
+        _jobPollers: {},      // canvas of setInterval ids per job
+
         async loadScraper() {
-            const [statusRes, runsRes, schedRes, backfillRes] = await Promise.all([
+            const [statusRes, runsRes, schedRes, backfillRes,
+                   newsRefreshRes, newsBackfillRes, networkRes] = await Promise.all([
                 fetch('/api/scraper/status').then(r => r.json()),
                 fetch('/api/scraper/runs').then(r => r.json()),
                 fetch('/api/scraper/schedule').then(r => r.json()),
                 fetch('/api/scraper/backfill-history').then(r => r.json()),
+                fetch('/api/scraper/refresh-news').then(r => r.json()).catch(() => ({})),
+                fetch('/api/scraper/backfill-news').then(r => r.json()).catch(() => ({})),
+                fetch('/api/families/refresh').then(r => r.json()).catch(() => ({})),
             ]);
             this.scraperStatus = statusRes;
             this.scraperRuns = runsRes;
             this.schedule = schedRes;
             this.backfill = backfillRes;
-            if (backfillRes.running && !this.backfillTimer) {
-                this.backfillTimer = setInterval(async () => {
-                    this.backfill = await fetch('/api/scraper/backfill-history').then(r => r.json());
-                    if (!this.backfill.running) {
-                        clearInterval(this.backfillTimer);
-                        this.backfillTimer = null;
-                    }
-                }, 3000);
-            }
+            this.newsRefresh = newsRefreshRes || this.newsRefresh;
+            this.newsBackfill = newsBackfillRes || this.newsBackfill;
+            this.networkRefresh = networkRes || this.networkRefresh;
+
+            // Resume polling for any already-running job
+            if (backfillRes.running) this._pollBackfill();
+            if (newsRefreshRes?.running) this._pollNewsRefresh();
+            if (newsBackfillRes?.running) this._pollNewsBackfill();
+            if (networkRes?.running) this._pollNetworkRefresh();
         },
 
         async triggerScrape() {
@@ -39,7 +61,18 @@ function scraperMixin() {
 
         async triggerBackfill() {
             await fetch('/api/scraper/backfill-history', { method: 'POST' });
-            this.loadScraper();
+            this._pollBackfill();
+        },
+
+        _pollBackfill() {
+            if (this._jobPollers.backfill) return;
+            this._jobPollers.backfill = setInterval(async () => {
+                this.backfill = await fetch('/api/scraper/backfill-history').then(r => r.json());
+                if (!this.backfill.running) {
+                    clearInterval(this._jobPollers.backfill);
+                    delete this._jobPollers.backfill;
+                }
+            }, 3000);
         },
 
         async syncHistory() {
@@ -53,6 +86,109 @@ function scraperMixin() {
             } finally {
                 this.syncing = false;
             }
+        },
+
+        // ─── News refresh (GDELT, last 30 days) ─────────────────────────
+
+        async triggerNewsRefresh() {
+            const r = await fetch('/api/scraper/refresh-news', { method: 'POST' }).then(r => r.json());
+            if (r.status === 'started') {
+                this.newsRefresh.running = true;
+                this._pollNewsRefresh();
+            } else {
+                // Already running — just sync state
+                this.newsRefresh = r;
+                this._pollNewsRefresh();
+            }
+        },
+
+        _pollNewsRefresh() {
+            if (this._jobPollers.newsRefresh) return;
+            this._jobPollers.newsRefresh = setInterval(async () => {
+                this.newsRefresh = await fetch('/api/scraper/refresh-news').then(r => r.json());
+                if (!this.newsRefresh.running) {
+                    clearInterval(this._jobPollers.newsRefresh);
+                    delete this._jobPollers.newsRefresh;
+                }
+            }, 3000);
+        },
+
+        // ─── News backfill (Wikipedia citations) ────────────────────────
+
+        async triggerNewsBackfill() {
+            const r = await fetch('/api/scraper/backfill-news?only_new=true', { method: 'POST' }).then(r => r.json());
+            if (r.status === 'started') {
+                this.newsBackfill.running = true;
+                this._pollNewsBackfill();
+            } else {
+                this.newsBackfill = r;
+                this._pollNewsBackfill();
+            }
+        },
+
+        _pollNewsBackfill() {
+            if (this._jobPollers.newsBackfill) return;
+            this._jobPollers.newsBackfill = setInterval(async () => {
+                this.newsBackfill = await fetch('/api/scraper/backfill-news').then(r => r.json());
+                if (!this.newsBackfill.running) {
+                    clearInterval(this._jobPollers.newsBackfill);
+                    delete this._jobPollers.newsBackfill;
+                }
+            }, 5000);
+        },
+
+        // ─── Forbes Wikipedia scrape (legacy) ──────────────────────────
+
+        async triggerForbesWiki() {
+            this.forbesWikiBusy = true;
+            this.forbesWikiMessage = 'Started — runs in the background.';
+            try {
+                await fetch('/api/scraper/forbes-backfill?start=2002&end=2024', {
+                    method: 'POST',
+                });
+            } catch (e) {
+                this.forbesWikiMessage = 'Failed: ' + e;
+            } finally {
+                this.forbesWikiBusy = false;
+            }
+        },
+
+        // ─── Forbes Kaggle import ──────────────────────────────────────
+
+        async triggerForbesKaggle() {
+            this.forbesKaggleBusy = true;
+            this.forbesKaggleMessage = 'Downloading + importing… ';
+            try {
+                const r = await fetch('/api/scraper/forbes-kaggle', { method: 'POST' }).then(r => r.json());
+                if (r.status === 'ok') {
+                    this.forbesKaggleMessage = `Imported ${r.total_imported.toLocaleString()} rows, linked ${r.total_linked} to existing persons.`;
+                } else {
+                    this.forbesKaggleMessage = 'Error: ' + (r.error || 'unknown');
+                }
+            } catch (e) {
+                this.forbesKaggleMessage = 'Failed: ' + e;
+            } finally {
+                this.forbesKaggleBusy = false;
+            }
+        },
+
+        // ─── Network (Wikidata graph) refresh ──────────────────────────
+
+        async triggerNetworkRefresh() {
+            const r = await fetch('/api/families/refresh', { method: 'POST' }).then(r => r.json()).catch(() => null);
+            if (r) this.networkRefresh = r;
+            this._pollNetworkRefresh();
+        },
+
+        _pollNetworkRefresh() {
+            if (this._jobPollers.networkRefresh) return;
+            this._jobPollers.networkRefresh = setInterval(async () => {
+                this.networkRefresh = await fetch('/api/families/refresh').then(r => r.json());
+                if (!this.networkRefresh.running) {
+                    clearInterval(this._jobPollers.networkRefresh);
+                    delete this._jobPollers.networkRefresh;
+                }
+            }, 3000);
         },
 
         async saveSchedule() {

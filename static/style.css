@@ -134,6 +134,16 @@ tbody tr:hover { background: #f8f9ff; }
 }
 .scraper-status-card { display: flex; justify-content: space-between; align-items: center; }
 
+/* Section header for the grouped Scraper-panel sub-sections */
+.scraper-section-h {
+    font-size: 11px; color: #888;
+    text-transform: uppercase; letter-spacing: 0.06em;
+    margin: 24px 0 8px;
+}
+.scraper-section-h:first-child { margin-top: 0; }
+.scraper-status-card .muted.small { display: block; margin-top: 4px; max-width: 720px; }
+.scraper-status-card a { color: #6c5ce7; }
+
 .form-row { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
 .form-row label { color: #666; width: 80px; font-size: 13px; }
 .form-row select, .form-row input[type="time"], .form-row input[type="date"] {

@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Bloomberg Scraper</title>
-    <link rel="stylesheet" href="/style.css?v=45">
+    <link rel="stylesheet" href="/style.css?v=46">
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
     <script src="https://cdn.jsdelivr.net/npm/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
@@ -1324,46 +1324,147 @@
 
     <!-- Scraper Tab -->
     <main x-show="tab === 'scraper'">
+        <!-- ─── Live scrape (the daily Bloomberg pull) ─────────────── -->
+        <h3 class="scraper-section-h">Live scrape</h3>
         <div class="scraper-status-card">
             <div>
-                <strong>Scraper Status</strong>
+                <strong>Bloomberg scrape</strong>
                 <div>
                     <span class="status-dot" :class="scraperStatus.status"></span>
-                    <span x-text="scraperStatus.status === 'running' ? 'Running...' : 'Idle'"></span>
+                    <span x-text="scraperStatus.status === 'running' ? 'Running…' : 'Idle'"></span>
+                    <span class="muted small" x-show="scraperStatus.last_success"
+                          x-text="' · last: ' + (scraperStatus.last_success ? formatDate(scraperStatus.last_success) : '—')"></span>
+                </div>
+                <div class="muted small">
+                    Pulls bloomberg.com/billionaires now. Auto-runs after the scrape: history backfill for newcomers, Wikidata QID resolution, and recent-news refresh.
                 </div>
             </div>
-            <button class="btn-primary" @click="triggerScrape()" :disabled="scraperStatus.status === 'running'">Run Now</button>
+            <button class="btn-primary" @click="triggerScrape()" :disabled="scraperStatus.status === 'running'">Run now</button>
         </div>
 
+        <!-- ─── One-time backfills ─────────────────────────────────── -->
+        <h3 class="scraper-section-h">Historical backfills</h3>
+
+        <!-- Wealth history -->
         <div class="scraper-status-card">
             <div>
-                <strong>Historical Wealth Backfill</strong>
-                <div class="muted" x-show="!backfill.running && !backfill.total">
-                    Fetches each profile's daily wealth history from Bloomberg (~13 min, polite 1.5s/profile).
+                <strong>Bloomberg wealth history</strong>
+                <div class="muted small">
+                    Pulls each profile's full daily net-worth time series. ~13 minutes total at the polite 1.5s/profile rate.
                 </div>
-                <div x-show="backfill.running || backfill.total">
+                <div x-show="backfill.running || backfill.total" style="margin-top: 4px;">
                     <span x-text="backfill.done + ' / ' + backfill.total + ' profiles'"></span>
-                    <span class="muted" x-show="backfill.errors" x-text="' (' + backfill.errors + ' errors)'"></span>
-                    <span class="muted" x-show="backfill.coverage">
+                    <span class="muted small" x-show="backfill.errors" x-text="' (' + backfill.errors + ' errors)'"></span>
+                    <span class="muted small" x-show="backfill.coverage">
                         — coverage: <span x-text="backfill.coverage.persons"></span> people,
                         <span x-text="(backfill.coverage.rows || 0).toLocaleString()"></span> rows
                     </span>
                 </div>
-                <div class="muted" x-show="syncMessage" x-text="syncMessage"></div>
+                <div class="muted small" x-show="syncMessage" x-text="syncMessage"></div>
             </div>
             <div style="display: flex; gap: 8px;">
                 <button class="btn-small" @click="syncHistory()" :disabled="syncing">
-                    <span x-text="syncing ? 'Syncing...' : 'Sync from Snapshots'"></span>
+                    <span x-text="syncing ? 'Syncing…' : 'Sync from snapshots'"></span>
                 </button>
                 <button class="btn-primary" @click="triggerBackfill()" :disabled="backfill.running">
-                    <span x-text="backfill.running ? 'Running...' : 'Backfill History'"></span>
+                    <span x-text="backfill.running ? 'Running…' : 'Backfill history'"></span>
                 </button>
             </div>
         </div>
 
+        <!-- Wikipedia news backfill -->
+        <div class="scraper-status-card">
+            <div>
+                <strong>Wikipedia news backfill</strong>
+                <div class="muted small">
+                    Mines each person's Wikipedia article for `&#123;&#123;cite news&#125;&#125;` references. Builds a multi-decade news timeline (2000s–today).
+                </div>
+                <div x-show="newsBackfill.running || newsBackfill.total" style="margin-top: 4px;">
+                    <span x-text="newsBackfill.done + ' / ' + newsBackfill.total + ' persons'"></span>
+                    <span class="muted small" x-show="newsBackfill.saved"
+                          x-text="' · ' + (newsBackfill.saved || 0).toLocaleString() + ' articles saved'"></span>
+                    <span class="muted small" x-show="newsBackfill.current"
+                          x-text="' · current: ' + newsBackfill.current"></span>
+                </div>
+            </div>
+            <button class="btn-primary" @click="triggerNewsBackfill()" :disabled="newsBackfill.running">
+                <span x-text="newsBackfill.running ? 'Running…' : 'Backfill news'"></span>
+            </button>
+        </div>
+
+        <!-- GDELT news refresh -->
+        <div class="scraper-status-card">
+            <div>
+                <strong>Recent news refresh</strong>
+                <div class="muted small">
+                    Pulls the past 30 days of news for every person via GDELT. Auto-runs after each scrape; this button forces an extra pass now.
+                </div>
+                <div x-show="newsRefresh.running || newsRefresh.total" style="margin-top: 4px;">
+                    <span x-text="newsRefresh.done + ' / ' + newsRefresh.total + ' persons'"></span>
+                    <span class="muted small" x-show="newsRefresh.saved"
+                          x-text="' · ' + (newsRefresh.saved || 0).toLocaleString() + ' articles saved'"></span>
+                </div>
+            </div>
+            <button class="btn-primary" @click="triggerNewsRefresh()" :disabled="newsRefresh.running">
+                <span x-text="newsRefresh.running ? 'Running…' : 'Refresh news'"></span>
+            </button>
+        </div>
+
+        <!-- Forbes Kaggle import -->
+        <div class="scraper-status-card">
+            <div>
+                <strong>Forbes 1997–2024 (Kaggle)</strong>
+                <div class="muted small">
+                    Downloads the
+                    <a href="https://www.kaggle.com/datasets/guillemservera/forbes-billionaires-1997-2023" target="_blank" rel="noopener">
+                        guillemservera/forbes-billionaires-1997-2023</a>
+                    dataset (CC0) and imports the annual rankings — adds 30k+ historical rows that power the time-travel slider back to 2001.
+                </div>
+                <div class="muted small" x-show="forbesKaggleMessage" x-text="forbesKaggleMessage"></div>
+            </div>
+            <button class="btn-primary" @click="triggerForbesKaggle()" :disabled="forbesKaggleBusy">
+                <span x-text="forbesKaggleBusy ? 'Importing…' : 'Import Kaggle Forbes'"></span>
+            </button>
+        </div>
+
+        <!-- Forbes Wikipedia legacy backfill -->
+        <div class="scraper-status-card">
+            <div>
+                <strong>Forbes via Wikipedia (fallback)</strong>
+                <div class="muted small">
+                    Scrapes the per-year Wikipedia "World's Billionaires" tables. Sparse and brittle — kept for years past the Kaggle 2024 freeze.
+                </div>
+                <div class="muted small" x-show="forbesWikiMessage" x-text="forbesWikiMessage"></div>
+            </div>
+            <button class="btn-small" @click="triggerForbesWiki()" :disabled="forbesWikiBusy">
+                <span x-text="forbesWikiBusy ? 'Running…' : 'Backfill from Wikipedia'"></span>
+            </button>
+        </div>
+
+        <!-- Wikidata network refresh -->
+        <div class="scraper-status-card">
+            <div>
+                <strong>Wikidata network refresh</strong>
+                <div class="muted small">
+                    Rebuilds the family + entity + holdings graph from Wikidata SPARQL. Heavy: takes 10–30 minutes; only run when the daily newcomer-catchup isn't enough.
+                </div>
+                <div x-show="networkRefresh.running" style="margin-top: 4px;">
+                    <span x-text="networkRefresh.stage || 'running'"></span>
+                    <span class="muted small" x-show="networkRefresh.total"
+                          x-text="' · ' + networkRefresh.done + ' / ' + networkRefresh.total"></span>
+                </div>
+            </div>
+            <button class="btn-small" @click="triggerNetworkRefresh()" :disabled="networkRefresh.running">
+                <span x-text="networkRefresh.running ? 'Running…' : 'Refresh network'"></span>
+            </button>
+        </div>
+
+        <!-- ─── Schedule (cron) ────────────────────────────────────── -->
+        <h3 class="scraper-section-h">Schedule</h3>
+
         <div class="schedule-card">
             <div class="schedule-header">
-                <h3>Schedule</h3>
+                <h3 style="margin: 0;">Daily scrape times</h3>
                 <label class="toggle">
                     <input type="checkbox" x-model="schedule.enabled" @change="saveSchedule()">
                     <span class="toggle-label" x-text="schedule.enabled ? 'Active' : 'Paused'"></span>
@@ -2068,7 +2169,7 @@
     <script src="/js/tabs/table.js?v=5"></script>
     <script src="/js/tabs/analytics.js?v=4"></script>
     <script src="/js/tabs/families.js?v=6"></script>
-    <script src="/js/tabs/scraper.js?v=1"></script>
+    <script src="/js/tabs/scraper.js?v=2"></script>
     <script src="/js/tabs/export.js?v=1"></script>
     <script src="/js/tabs/panel.js?v=5"></script>
     <script src="/js/tabs/profile.js?v=25"></script>
