@@ -75,12 +75,62 @@ CREATE TABLE IF NOT EXISTS wealth_history (
     FOREIGN KEY (person_id) REFERENCES persons(person_id)
 );
 
+-- Historical annual rankings from third-party lists (Forbes 400, Forbes
+-- World's Billionaires, etc.) backfilled from Wikipedia. Distinct from
+-- wealth_history (Bloomberg daily) — these are once-a-year snapshots that
+-- extend coverage back to 1982. Time-travel queries fall back to the most
+-- recent at-or-before row when wealth_history has no data for that date.
+CREATE TABLE IF NOT EXISTS historical_rankings (
+    source        TEXT NOT NULL,           -- e.g. 'forbes_400_us', 'forbes_world'
+    year          INTEGER NOT NULL,
+    rank          INTEGER NOT NULL,
+    person_id     INTEGER,                 -- NULL when not yet linked to our persons
+    name          TEXT NOT NULL,           -- as printed in the list
+    net_worth_usd INTEGER NOT NULL,
+    citizenship   TEXT,
+    age           INTEGER,
+    industry      TEXT,
+    notes         TEXT,                    -- e.g. "& family", "deceased"
+    PRIMARY KEY (source, year, rank),
+    FOREIGN KEY (person_id) REFERENCES persons(person_id)
+);
+CREATE INDEX IF NOT EXISTS idx_hist_rank_person ON historical_rankings(person_id, year);
+CREATE INDEX IF NOT EXISTS idx_hist_rank_year ON historical_rankings(year DESC, rank ASC);
+
 CREATE INDEX IF NOT EXISTS idx_wealth_history_date ON wealth_history(date);
 CREATE INDEX IF NOT EXISTS idx_wealth_history_date_value ON wealth_history(date, net_worth_usd DESC);
 
 CREATE TABLE IF NOT EXISTS history_backfilled (
     person_id     INTEGER PRIMARY KEY,
     backfilled_at DATETIME NOT NULL,
+    FOREIGN KEY (person_id) REFERENCES persons(person_id)
+);
+
+CREATE TABLE IF NOT EXISTS news_articles (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    person_id      INTEGER NOT NULL,
+    article_date   TEXT NOT NULL,
+    -- 'day' | 'month' | 'year' — Wikipedia citations sometimes give just a
+    -- year, which we fall back to YYYY-06-15. Anything coarser than 'day'
+    -- is hidden from the chart so we don't pin midyear-fallbacks to the
+    -- wealth curve and imply false precision. The article still shows up
+    -- in the news card with the date as written.
+    date_precision TEXT NOT NULL DEFAULT 'day',
+    title          TEXT NOT NULL,
+    url            TEXT NOT NULL,
+    source         TEXT,
+    importance     INTEGER NOT NULL DEFAULT 0,
+    fetched_at     DATETIME NOT NULL,
+    UNIQUE(person_id, url),
+    FOREIGN KEY (person_id) REFERENCES persons(person_id)
+);
+CREATE INDEX IF NOT EXISTS idx_news_person_date ON news_articles(person_id, article_date DESC);
+CREATE INDEX IF NOT EXISTS idx_news_person_importance ON news_articles(person_id, importance DESC, article_date DESC);
+
+CREATE TABLE IF NOT EXISTS news_fetched (
+    person_id  INTEGER PRIMARY KEY,
+    fetched_at DATETIME NOT NULL,
+    backfilled BOOLEAN NOT NULL DEFAULT 0,
     FOREIGN KEY (person_id) REFERENCES persons(person_id)
 );
 
@@ -207,6 +257,7 @@ def init_db(db_path=None, network_db_path=None):
     conn = sqlite3.connect(path)
     conn.executescript(SCHEMA)
     _migrate_legacy_table(conn)
+    _migrate_news_articles_columns(conn)
     _seed_history_backfilled(conn)
     conn.close()
 
@@ -238,6 +289,34 @@ def _migrate_entities_columns(conn):
         if col not in existing:
             conn.execute(f"ALTER TABLE entities ADD COLUMN {col} {sql_type}")
     conn.commit()
+
+
+def _migrate_news_articles_columns(conn):
+    """Idempotent: news_articles gains date_precision so the chart can drop
+    year/month-only fallbacks while the news card still shows them.
+
+    Existing rows are conservatively classified by their stored date suffix:
+    YYYY-06-15 (a year-only fallback) → 'year', YYYY-MM-15 → 'month',
+    everything else → 'day'. False positives are tolerable — the worst case
+    is hiding one or two day-precise articles from the chart that genuinely
+    happened on June 15."""
+    existing = {r[1] for r in conn.execute("PRAGMA table_info(news_articles)").fetchall()}
+    if "date_precision" not in existing:
+        conn.execute("ALTER TABLE news_articles ADD COLUMN date_precision TEXT NOT NULL DEFAULT 'day'")
+        # Best-effort backfill of historical rows. Articles whose date
+        # matches the year-only fallback (06-15) almost certainly came from
+        # a `|date=YYYY` citation; same for month-only (DD=15 with non-06
+        # months would also be 15th of month).
+        conn.execute(
+            "UPDATE news_articles SET date_precision = 'year' "
+            "WHERE substr(article_date, 6, 5) = '06-15'"
+        )
+        conn.execute(
+            "UPDATE news_articles SET date_precision = 'month' "
+            "WHERE substr(article_date, 9, 2) = '15' "
+            "AND substr(article_date, 6, 2) <> '06'"
+        )
+        conn.commit()
 
 
 def _migrate_persons_index_columns(conn):

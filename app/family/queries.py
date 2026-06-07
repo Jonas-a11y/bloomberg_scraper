@@ -313,6 +313,29 @@ def get_person_profile(person_id):
             "wikipedia_url": meta.get("wikipedia_url"),
         })
 
+    main = get_db()
+    # Pull the full set; the UI groups by year and decides how much to show.
+    # Ordered by date so the year groupings come back in chronological order.
+    news = [dict(r) for r in main.execute(
+        """
+        SELECT article_date, date_precision, title, url, source, importance
+        FROM news_articles
+        WHERE person_id = ?
+        ORDER BY article_date DESC, importance DESC
+        LIMIT 500
+        """,
+        (person_id,),
+    ).fetchall()]
+    # When was the news last fetched? Drives the "Updated 2h ago" label on
+    # the news card so visitors can see freshness.
+    news_fetched_row = main.execute(
+        "SELECT fetched_at, backfilled FROM news_fetched WHERE person_id = ?",
+        (person_id,),
+    ).fetchone()
+    news_fetched_at = news_fetched_row["fetched_at"] if news_fetched_row else None
+    news_backfilled = bool(news_fetched_row["backfilled"]) if news_fetched_row else False
+    main.close()
+
     return {
         **person,
         **snapshot,
@@ -325,6 +348,9 @@ def get_person_profile(person_id):
         "history": history,
         "family": family,
         "entity_links": entity_links,
+        "news": news,
+        "news_fetched_at": news_fetched_at,
+        "news_backfilled": news_backfilled,
     }
 
 

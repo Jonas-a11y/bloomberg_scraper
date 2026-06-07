@@ -13,16 +13,35 @@ function formatWealth(v) {
 
 function formatChange(v) {
     if (!v) return '$0';
-    const sign = v >= 0 ? '+' : '';
-    if (Math.abs(v) >= 1e9) return `${sign}$${(v / 1e9).toFixed(1)}B`;
-    if (Math.abs(v) >= 1e6) return `${sign}$${(v / 1e6).toFixed(1)}M`;
-    return `${sign}$${v.toLocaleString()}`;
+    // We render the sign explicitly outside the dollar prefix so negative
+    // values read as `-$8.0B`, not `$-8.0B`.
+    const sign = v < 0 ? '-' : '+';
+    const abs = Math.abs(v);
+    if (abs >= 1e9) return `${sign}$${(abs / 1e9).toFixed(1)}B`;
+    if (abs >= 1e6) return `${sign}$${(abs / 1e6).toFixed(1)}M`;
+    return `${sign}$${abs.toLocaleString()}`;
 }
 
 function formatDate(d) {
     if (!d) return '';
     return new Date(d).toLocaleString(undefined, {
         month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+    });
+}
+
+function formatRelativeTime(d) {
+    // "2h ago", "5d ago", "Jan 4". Switches to absolute for anything older
+    // than two weeks since "47 days ago" reads worse than the date.
+    if (!d) return '';
+    const then = new Date(d).getTime();
+    if (isNaN(then)) return '';
+    const diffSec = Math.max(0, (Date.now() - then) / 1000);
+    if (diffSec < 60) return 'just now';
+    if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`;
+    if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h ago`;
+    if (diffSec < 86400 * 14) return `${Math.floor(diffSec / 86400)}d ago`;
+    return new Date(d).toLocaleDateString(undefined, {
+        month: 'short', day: 'numeric', year: 'numeric',
     });
 }
 

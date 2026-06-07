@@ -6,7 +6,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.database import init_db
 from app.scheduler import start_scheduler, stop_scheduler
-from app.routes import dashboard, billionaires, analytics, scraper_api, export, families
+from app.routes import dashboard, billionaires, analytics, scraper_api, export, families, insights
 
 
 @asynccontextmanager
@@ -25,6 +25,7 @@ app.include_router(analytics.router, prefix="/api")
 app.include_router(scraper_api.router, prefix="/api")
 app.include_router(export.router, prefix="/api")
 app.include_router(families.router, prefix="/api")
+app.include_router(insights.router, prefix="/api")
 
 static_dir = Path(__file__).parent.parent / "static"
 if static_dir.exists():

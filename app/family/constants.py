@@ -97,4 +97,7 @@ BUSINESS_HINTS = (
     "magnate", "heiress", "heir ", "tycoon", "executive",
     "chairman", "chairwoman", "chief executive",
     "industrialist", "financier", "philanthropist",
+    # Bloomberg lists family-controlled fortunes as e.g. "Walton family";
+    # Wikidata describes those as "American family" / "wealthy family".
+    "family", "dynasty",
 )

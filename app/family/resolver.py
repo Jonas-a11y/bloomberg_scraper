@@ -68,17 +68,26 @@ def resolve_persons(state, delay=0.2):
     state["done"] = 0
 
     for row in rows:
-        name = full_names.get(row["person_id"]) or row["common_name"]
-        if name:
-            qid = resolve_qid(name)
+        # Try common_name first (Wikidata's labels are usually the public
+        # name, "Henry Kravis", not Bloomberg's full legal "Henry Roberts
+        # Kravis"). Fall back to full_name only if the common search fails.
+        common = row["common_name"]
+        full = full_names.get(row["person_id"])
+        qid = None
+        for candidate in (common, full):
+            if not candidate or candidate == qid:
+                continue
+            qid = resolve_qid(candidate)
             if qid:
-                net = get_network_db()
-                net.execute(
-                    "UPDATE persons_index SET wikidata_qid = ? WHERE person_id = ?",
-                    (qid, row["person_id"]),
-                )
-                net.commit()
-                net.close()
-                state["qids_resolved"] += 1
+                break
+        if qid:
+            net = get_network_db()
+            net.execute(
+                "UPDATE persons_index SET wikidata_qid = ? WHERE person_id = ?",
+                (qid, row["person_id"]),
+            )
+            net.commit()
+            net.close()
+            state["qids_resolved"] += 1
         state["done"] += 1
         time.sleep(delay)

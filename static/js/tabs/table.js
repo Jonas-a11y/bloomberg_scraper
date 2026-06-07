@@ -23,6 +23,20 @@ function tableMixin() {
         tableColumns: TABLE_COLUMNS,
         visibleColumns: TABLE_COLUMNS.filter(c => c.default).map(c => c.key),
         showColumnPicker: false,
+        // Time travel: when `tableAsOfDate` is non-empty we render the
+        // historical ranking at that date via /api/billionaires/as-of
+        // instead of the live snapshot. The slider's bounds come from the
+        // data-range endpoint.
+        tableAsOfDate: '',
+        tableAsOfMin: '',
+        tableAsOfMax: '',
+        tableDiffFrom: '',
+        tableDiffTo: '',
+        tableDiffData: null,
+        tableDiffMode: false,
+        // How many rows to show in each diff column. Defaults to 6 for a
+        // quick scan; "Show more" expands to 50 (the API cap).
+        tableDiffShowCount: 6,
 
         async loadFilterOptions() {
             const [indRes, cntRes] = await Promise.all([
@@ -41,7 +55,62 @@ function tableMixin() {
             if (p.industry) params.set('industry', p.industry);
             if (p.gender) params.set('gender', p.gender);
             params.set('sort', p.sort);
-            this.tableData = await fetch(`/api/billionaires?${params}`).then(r => r.json());
+            // Time-travel mode: route to /as-of when a historical date is
+            // selected. Filters apply server-side either way.
+            if (this.tableAsOfDate) {
+                params.set('date', this.tableAsOfDate);
+                params.set('limit', '500');
+                this.tableData = await fetch(`/api/billionaires/as-of?${params}`).then(r => r.json());
+            } else {
+                this.tableData = await fetch(`/api/billionaires?${params}`).then(r => r.json());
+            }
+        },
+
+        async loadTableAsOfRange() {
+            // Pull the legal range once on first table render so the slider
+            // knows its min/max. Cached after first call.
+            if (this.tableAsOfMin) return;
+            const r = await fetch('/api/billionaires/data-range').then(r => r.json());
+            this.tableAsOfMin = (r.min_date || '').slice(0, 10);
+            this.tableAsOfMax = (r.max_date || '').slice(0, 10);
+            // Default the diff-mode dates to "5 years ago" → "today" so the
+            // diff button is immediately usable.
+            if (!this.tableDiffFrom && this.tableAsOfMax) {
+                const max = new Date(this.tableAsOfMax);
+                const from = new Date(max);
+                from.setFullYear(max.getFullYear() - 5);
+                const minD = new Date(this.tableAsOfMin);
+                this.tableDiffFrom = (from < minD ? minD : from)
+                    .toISOString().slice(0, 10);
+                this.tableDiffTo = this.tableAsOfMax;
+            }
+        },
+
+        setTableAsOf(value) {
+            this.tableAsOfDate = value || '';
+            this.loadTable();
+        },
+
+        clearTableAsOf() {
+            this.tableAsOfDate = '';
+            this.loadTable();
+        },
+
+        async runTableDiff() {
+            if (!this.tableDiffFrom || !this.tableDiffTo) return;
+            this.tableDiffShowCount = 6;
+            const params = new URLSearchParams({
+                from_date: this.tableDiffFrom,
+                to_date: this.tableDiffTo,
+                top: '100',
+            });
+            this.tableDiffData = await fetch(`/api/billionaires/diff?${params}`).then(r => r.json());
+        },
+
+        toggleTableDiffMode() {
+            this.tableDiffMode = !this.tableDiffMode;
+            this.tableDiffShowCount = 6;
+            if (this.tableDiffMode) this.runTableDiff();
         },
 
         sortTable(col) {
@@ -88,6 +157,97 @@ function tableMixin() {
                 direction === 'up' ? b.last_change_usd - a.last_change_usd
                                    : a.last_change_usd - b.last_change_usd);
             return sorted.slice(0, limit);
+        },
+
+        // ─── Time-travel UX helpers ──────────────────────────────────────
+
+        tableYearTicks() {
+            // Year labels under the snapshot slider. We pick ~6-8 evenly
+            // spaced years across the legal range so the slider has visual
+            // anchors instead of looking blank.
+            const min = this.tableAsOfMin || '2001-01-01';
+            const max = this.tableAsOfMax || new Date().toISOString().slice(0, 10);
+            const minY = parseInt(min.slice(0, 4), 10);
+            const maxY = parseInt(max.slice(0, 4), 10);
+            const span = maxY - minY;
+            if (span <= 0) return [minY];
+            const target = 7;
+            const step = Math.max(1, Math.round(span / (target - 1)));
+            const ticks = [];
+            for (let y = minY; y <= maxY; y += step) ticks.push(y);
+            // Always include the max year as the rightmost tick
+            if (ticks[ticks.length - 1] !== maxY) ticks.push(maxY);
+            return ticks;
+        },
+
+        tableYearPresets() {
+            // Quick-jump chips. "Now" + a few historically interesting
+            // anchors that the data covers.
+            const max = this.tableAsOfMax || new Date().toISOString().slice(0, 10);
+            const today = max;
+            const presets = [
+                { label: 'Now', date: '' },
+                { label: '2024', date: '2024-06-01' },
+                { label: '2020', date: '2020-06-01' },
+                { label: '2015', date: '2015-06-01' },
+                { label: '2010', date: '2010-06-01' },
+                { label: '2005', date: '2005-06-01' },
+            ];
+            // Filter to only presets whose date is within the legal range
+            const min = this.tableAsOfMin || '2001-01-01';
+            return presets.filter(p => !p.date || (p.date >= min && p.date <= max));
+        },
+
+        tableComparePresets() {
+            // Compare-mode quick spans. Each sets both `from` and `to`.
+            const max = this.tableAsOfMax || new Date().toISOString().slice(0, 10);
+            const min = this.tableAsOfMin || '2001-01-01';
+            const today = new Date(max);
+            const yearsAgo = (n) => {
+                const d = new Date(today);
+                d.setFullYear(today.getFullYear() - n);
+                const iso = d.toISOString().slice(0, 10);
+                return iso < min ? min : iso;
+            };
+            return [
+                { label: '1 year', from: yearsAgo(1), to: max },
+                { label: '5 years', from: yearsAgo(5), to: max },
+                { label: '10 years', from: yearsAgo(10), to: max },
+                { label: '20 years', from: yearsAgo(20), to: max },
+                { label: 'All-time', from: min, to: max },
+            ];
+        },
+
+        setComparePreset(p) {
+            this.tableDiffFrom = p.from;
+            this.tableDiffTo = p.to;
+            this.runTableDiff();
+        },
+
+        diffHeadline() {
+            // One-line summary: "Bill Gates ($40B) → Elon Musk ($726B)" so
+            // the user gets the punchline before scanning columns.
+            const d = this.tableDiffData;
+            if (!d) return '';
+            const fromYear = d.from_date?.slice(0, 4) || '';
+            const toYear = d.to_date?.slice(0, 4) || '';
+            const big = d.top_gainers?.[0];
+            if (!big) return `${fromYear} → ${toYear}`;
+            // formatChange already prepends a sign, so we don't add our own.
+            return `${big.common_name}: ${formatChange(big.worth_change)} ` +
+                   `(${fromYear} → ${toYear})`;
+        },
+
+        diffTotalGains() {
+            const top = (this.tableDiffData?.top_gainers || []).slice(0, 10);
+            const sum = top.reduce((s, r) => s + Math.max(0, r.worth_change || 0), 0);
+            return formatChange(sum);
+        },
+
+        diffTotalLosses() {
+            const top = (this.tableDiffData?.top_losers || []).slice(0, 10);
+            const sum = top.reduce((s, r) => s + Math.min(0, r.worth_change || 0), 0);
+            return formatChange(sum);
         },
     };
 }

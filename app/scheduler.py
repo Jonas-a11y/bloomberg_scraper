@@ -15,6 +15,7 @@ scheduler = BackgroundScheduler()
 _is_running = False
 _backfill_state = {"running": False, "done": 0, "total": 0, "errors": 0, "started_at": None, "finished_at": None}
 _newcomer_wikidata_state = {"running": False, "done": 0, "total": 0, "started_at": None, "finished_at": None}
+_news_refresh_state = {"running": False, "done": 0, "total": 0, "errors": 0, "saved": 0, "started_at": None, "finished_at": None}
 
 # Bloomberg occasionally rate-limits or 5xx's the scrape; rather than wait for
 # the next scheduled run (could be 24h away), automatically retry with growing
@@ -88,6 +89,16 @@ def run_scrape(attempt=1):
             "date",
             run_date=datetime.now() + timedelta(seconds=10),
             id=f"newcomer_wikidata_{run_id}",
+            replace_existing=True,
+        )
+        # Pull recent news for the top-ranked billionaires so the profile
+        # chart has fresh annotations. Runs last so it doesn't fight the
+        # other catch-up jobs for sockets.
+        scheduler.add_job(
+            run_news_refresh,
+            "date",
+            run_date=datetime.now() + timedelta(seconds=20),
+            id=f"news_refresh_{run_id}",
             replace_existing=True,
         )
     except Exception as e:
@@ -289,8 +300,18 @@ def run_newcomer_wikidata_catchup():
     try:
         resolved = []
         for row in pending:
-            name = full_names.get(row["person_id"]) or row["common_name"]
-            qid = resolve_qid(name) if name else None
+            # Try common_name first ("Henry Kravis"), fall back to full_name
+            # ("Henry Roberts Kravis"). Wikidata labels usually match the
+            # short form.
+            common = row["common_name"]
+            full = full_names.get(row["person_id"])
+            qid = None
+            for candidate in (common, full):
+                if not candidate:
+                    continue
+                qid = resolve_qid(candidate)
+                if qid:
+                    break
             if qid:
                 net = get_network_db()
                 net.execute(
@@ -372,3 +393,365 @@ def run_newcomer_wikidata_catchup():
 
 def get_newcomer_wikidata_state():
     return dict(_newcomer_wikidata_state)
+
+
+# Persons whose news_fetched.fetched_at is within this many hours are skipped
+# on the next run. Daily refresh + 20h threshold gives a small safety margin.
+NEWS_REFRESH_MIN_AGE_HOURS = 20
+
+# Per-person rate limit between GDELT calls. Their docs ask for one request
+# every 5 seconds — we use 6s as a polite buffer; they 429 when traffic spikes.
+NEWS_REFRESH_DELAY_SEC = 6.0
+
+
+def run_news_refresh(force=False, person_ids=None):
+    """Fetch recent news for billionaires and store in news_articles.
+
+    Default scope: every person in the latest snapshot, skipping anyone
+    fetched within the last 20h. The 20h skip means a daily run only hits
+    persons that haven't been refreshed yet — across days the queue rotates
+    through the full 500.
+
+    force=True ignores the freshness check (e.g. manual refresh trigger).
+    person_ids constrains the run to specific people.
+    """
+    if _news_refresh_state["running"]:
+        return
+    from app.news import fetch_news_for_person
+
+    conn = get_db()
+    if person_ids:
+        placeholders = ",".join("?" * len(person_ids))
+        rows = conn.execute(
+            f"""
+            SELECT p.person_id, p.full_name, p.common_name
+            FROM persons p
+            WHERE p.person_id IN ({placeholders})
+            """,
+            list(person_ids),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            """
+            SELECT p.person_id, p.full_name, p.common_name
+            FROM persons p
+            JOIN snapshots s ON s.person_id = p.person_id
+            WHERE s.scraped_at = (SELECT MAX(scraped_at) FROM snapshots)
+            ORDER BY s.rank ASC
+            """,
+        ).fetchall()
+
+    if not force:
+        cutoff = (datetime.now() - timedelta(hours=NEWS_REFRESH_MIN_AGE_HOURS)).isoformat()
+        recent = {
+            r[0] for r in conn.execute(
+                "SELECT person_id FROM news_fetched WHERE fetched_at > ?",
+                (cutoff,),
+            ).fetchall()
+        }
+        rows = [r for r in rows if r[0] not in recent]
+    conn.close()
+
+    if not rows:
+        return
+
+    _news_refresh_state.update({
+        "running": True, "done": 0, "total": len(rows), "errors": 0, "saved": 0,
+        "started_at": datetime.now().isoformat(), "finished_at": None,
+    })
+    logger.info(f"News refresh: {len(rows)} persons to fetch")
+    try:
+        for person_id, full_name, common_name in rows:
+            name = full_name or common_name
+            try:
+                articles = fetch_news_for_person(name) if name else []
+                if articles:
+                    conn = get_db()
+                    now = datetime.now().isoformat()
+                    cur = conn.executemany(
+                        """
+                        INSERT OR IGNORE INTO news_articles
+                            (person_id, article_date, date_precision, title, url, source, importance, fetched_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        [
+                            (person_id, a["article_date"], a.get("date_precision", "day"),
+                             a["title"], a["url"], a.get("source"), a["importance"], now)
+                            for a in articles
+                        ],
+                    )
+                    _news_refresh_state["saved"] += cur.rowcount
+                    conn.execute(
+                        "INSERT OR REPLACE INTO news_fetched (person_id, fetched_at) VALUES (?, ?)",
+                        (person_id, now),
+                    )
+                    conn.commit()
+                    conn.close()
+                else:
+                    conn = get_db()
+                    conn.execute(
+                        "INSERT OR REPLACE INTO news_fetched (person_id, fetched_at) VALUES (?, ?)",
+                        (person_id, datetime.now().isoformat()),
+                    )
+                    conn.commit()
+                    conn.close()
+            except Exception as e:
+                _news_refresh_state["errors"] += 1
+                logger.warning(f"News fetch failed for {name}: {e}")
+            _news_refresh_state["done"] += 1
+            time.sleep(NEWS_REFRESH_DELAY_SEC)
+    finally:
+        _news_refresh_state["running"] = False
+        _news_refresh_state["finished_at"] = datetime.now().isoformat()
+        logger.info(
+            f"News refresh done: {_news_refresh_state['done']}/{_news_refresh_state['total']} "
+            f"({_news_refresh_state['errors']} errors, {_news_refresh_state['saved']} saved)"
+        )
+
+
+def get_news_refresh_state():
+    return dict(_news_refresh_state)
+
+
+# GDELT 2.0 indexes news from Feb 2015 onwards. Backfilling this whole window
+# year by year gives every billionaire a multi-year news timeline rather than
+# just the past 30 days.
+NEWS_BACKFILL_START_YEAR = 2015
+NEWS_BACKFILL_LIMIT = 250  # max records GDELT returns per query
+
+_news_backfill_state = {
+    "running": False, "done": 0, "total": 0, "errors": 0, "saved": 0,
+    "started_at": None, "finished_at": None, "current": None,
+}
+
+
+def run_news_backfill(person_ids=None, only_new=True):
+    """Pull each person's full news timeline from their Wikipedia page.
+
+    Wikipedia citations give us a curated, dated, decade-spanning timeline
+    without rate limit pain — every cited news article in someone's bio is
+    already a "significant event" by editorial selection.
+
+    only_new=True (default) skips persons whose news_fetched.backfilled is
+    already 1.
+    """
+    if _news_backfill_state["running"]:
+        return
+    from app.wiki_news import fetch_wikipedia_news
+
+    # Pull Wikipedia URLs from network.db (populated by Wikidata enrichment)
+    net = get_network_db()
+    if person_ids:
+        placeholders = ",".join("?" * len(person_ids))
+        wiki_rows = net.execute(
+            f"""SELECT person_id, wikidata_metadata FROM persons_index
+                WHERE person_id IN ({placeholders}) AND wikidata_metadata IS NOT NULL""",
+            list(person_ids),
+        ).fetchall()
+    else:
+        wiki_rows = net.execute(
+            "SELECT person_id, wikidata_metadata FROM persons_index "
+            "WHERE wikidata_metadata IS NOT NULL"
+        ).fetchall()
+    net.close()
+
+    wiki_url_by_pid = {}
+    for r in wiki_rows:
+        try:
+            blob = json.loads(r["wikidata_metadata"])
+            url = blob.get("wikipedia_url")
+            if url:
+                wiki_url_by_pid[r["person_id"]] = url
+        except (ValueError, TypeError):
+            pass
+
+    main = get_db()
+    if person_ids:
+        placeholders = ",".join("?" * len(person_ids))
+        rows = main.execute(
+            f"""SELECT p.person_id, p.full_name, p.common_name
+                FROM persons p WHERE p.person_id IN ({placeholders})""",
+            list(person_ids),
+        ).fetchall()
+    else:
+        # Include EVERYONE we have a Wikipedia URL for — current top-500 plus
+        # anyone who's ever appeared in a snapshot (dropouts). Their
+        # historical news is still relevant context.
+        rows = main.execute(
+            """
+            SELECT DISTINCT p.person_id, p.full_name, p.common_name,
+                COALESCE(MIN(s.rank), 999999) AS best_rank
+            FROM persons p
+            LEFT JOIN snapshots s ON s.person_id = p.person_id
+            GROUP BY p.person_id
+            ORDER BY best_rank ASC
+            """,
+        ).fetchall()
+    rows = [(r[0], r[1], r[2]) for r in rows if r[0] in wiki_url_by_pid]
+
+    if only_new:
+        backfilled = {
+            r[0] for r in main.execute(
+                "SELECT person_id FROM news_fetched WHERE backfilled = 1"
+            ).fetchall()
+        }
+        rows = [r for r in rows if r[0] not in backfilled]
+    main.close()
+
+    if not rows:
+        return
+
+    _news_backfill_state.update({
+        "running": True, "done": 0, "total": len(rows), "errors": 0, "saved": 0,
+        "started_at": datetime.now().isoformat(), "finished_at": None,
+        "current": None,
+    })
+    logger.info(f"News backfill (Wikipedia): {len(rows)} persons")
+    try:
+        for person_id, full_name, common_name in rows:
+            name = full_name or common_name
+            _news_backfill_state["current"] = name
+            wiki_url = wiki_url_by_pid.get(person_id)
+            try:
+                articles = fetch_wikipedia_news(wiki_url, limit=200)
+                if articles:
+                    conn = get_db()
+                    now = datetime.now().isoformat()
+                    cur = conn.executemany(
+                        """
+                        INSERT OR IGNORE INTO news_articles
+                            (person_id, article_date, date_precision, title, url, source, importance, fetched_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        [
+                            (person_id, a["article_date"], a.get("date_precision", "day"),
+                             a["title"], a["url"], a.get("source"), a["importance"], now)
+                            for a in articles
+                        ],
+                    )
+                    _news_backfill_state["saved"] += cur.rowcount
+                    conn.commit()
+                    conn.close()
+            except Exception as e:
+                _news_backfill_state["errors"] += 1
+                logger.warning(f"Backfill {name}: {e}")
+            # Mark person backfilled even when no articles came back — saves
+            # us re-fetching pages with no citations.
+            conn = get_db()
+            conn.execute(
+                "INSERT OR REPLACE INTO news_fetched (person_id, fetched_at, backfilled) "
+                "VALUES (?, ?, 1)",
+                (person_id, datetime.now().isoformat()),
+            )
+            conn.commit()
+            conn.close()
+            _news_backfill_state["done"] += 1
+            # Wikipedia rate-limits IPs — 1 req/2s keeps us comfortably below
+            # their threshold even when the backfill walks 200+ persons.
+            time.sleep(2.0)
+    finally:
+        _news_backfill_state["running"] = False
+        _news_backfill_state["current"] = None
+        _news_backfill_state["finished_at"] = datetime.now().isoformat()
+        logger.info(
+            f"News backfill done: {_news_backfill_state['done']}/{_news_backfill_state['total']} "
+            f"({_news_backfill_state['errors']} errors, {_news_backfill_state['saved']} saved)"
+        )
+        # Re-rank shared URLs once the batch is in. Cheap (O(N URLs)) and
+        # idempotent so we can call it any time. Skipped silently on error
+        # — the score table just falls back to per-article keyword scoring.
+        try:
+            changed = rescore_news_by_co_occurrence()
+            if changed:
+                logger.info(f"Co-occurrence rescore: bumped {changed} URLs")
+        except Exception as e:
+            logger.warning(f"Co-occurrence rescore failed: {e}")
+
+
+def get_news_backfill_state():
+    return dict(_news_backfill_state)
+
+
+def rescore_news_by_co_occurrence():
+    """Boost importance for URLs cited across multiple billionaires.
+
+    A URL that appears in N≥2 different persons' news_articles is reporting
+    on a shared event (Bezos v Sánchez divorce, joint acquisition, etc.) —
+    bump its importance by `2 × (N - 1)` capped at +12.
+
+    Idempotent: tracks applied bonuses in news_co_occurrence so re-running
+    only updates rows whose share-count has changed since last time.
+    Returns the number of URLs whose score was changed."""
+    conn = get_db()
+    # Make sure the bookkeeping table exists. Idempotent CREATE.
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS news_co_occurrence (
+            url        TEXT PRIMARY KEY,
+            shared_n   INTEGER NOT NULL,
+            applied_at DATETIME NOT NULL
+        )
+        """
+    )
+    rows = conn.execute(
+        """
+        SELECT url, COUNT(DISTINCT person_id) AS shared, MIN(title) AS title
+        FROM news_articles
+        GROUP BY url
+        HAVING COUNT(DISTINCT person_id) > 1
+        """,
+    ).fetchall()
+    if not rows:
+        conn.close()
+        return 0
+
+    prior = {
+        r[0]: r[1] for r in conn.execute(
+            "SELECT url, shared_n FROM news_co_occurrence",
+        ).fetchall()
+    }
+    # Down-weight bulk listing pages — they're cited on dozens of profiles
+    # but they're not events, just snapshots of "the rich list". Detect with
+    # a few cheap markers.
+    LIST_MARKERS = (
+        "richest", "rich list", "billionaires index",
+        " 100 ", " 200 ", " 50 ", " 500 ",
+        "world's billion", "top billion",
+    )
+    changed = 0
+    now = datetime.now().isoformat()
+    for r in rows:
+        url = r["url"]
+        shared = r["shared"]
+        title = (r["title"] or "").lower()
+        is_listicle = any(m in title for m in LIST_MARKERS)
+        prev = prior.get(url, 0)
+        if shared == prev:
+            continue
+        # Real shared events: up to +12. Listicles: cap at +2 (recognition,
+        # not significance) so they don't dominate the per-year top-N.
+        cap = 2 if is_listicle else 12
+        new_bonus = min(cap, 2 * (shared - 1))
+        prev_cap = 2 if is_listicle else 12
+        old_bonus = min(prev_cap, 2 * (prev - 1)) if prev else 0
+        delta = new_bonus - old_bonus
+        if delta == 0:
+            conn.execute(
+                "INSERT OR REPLACE INTO news_co_occurrence (url, shared_n, applied_at) "
+                "VALUES (?, ?, ?)",
+                (url, shared, now),
+            )
+            continue
+        conn.execute(
+            "UPDATE news_articles SET importance = importance + ? WHERE url = ?",
+            (delta, url),
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO news_co_occurrence (url, shared_n, applied_at) "
+            "VALUES (?, ?, ?)",
+            (url, shared, now),
+        )
+        changed += 1
+    conn.commit()
+    conn.close()
+    return changed

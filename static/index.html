@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Bloomberg Scraper</title>
-    <link rel="stylesheet" href="/style.css?v=31">
+    <link rel="stylesheet" href="/style.css?v=44">
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
     <script src="https://cdn.jsdelivr.net/npm/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
@@ -16,6 +16,7 @@
             <button :class="{ active: tab === 'dashboard' }" @click="tab = 'dashboard'">Dashboard</button>
             <button :class="{ active: tab === 'table' }" @click="tab = 'table'; loadTable()">Table</button>
             <button :class="{ active: tab === 'analytics' }" @click="tab = 'analytics'; loadAnalytics()">Analytics</button>
+            <button :class="{ active: tab === 'insights' }" @click="tab = 'insights'; loadInsights()">Insights</button>
             <button :class="{ active: tab === 'families' }" @click="tab = 'families'; loadFamilies()">Network</button>
             <button :class="{ active: tab === 'scraper' }" @click="tab = 'scraper'; loadScraper()">Scraper</button>
             <button :class="{ active: tab === 'export' }" @click="tab = 'export'; if (!tableData.data.length) loadTable()">Export</button>
@@ -143,8 +144,16 @@
                     enrichment pass cross-references each person against
                     <strong>Wikidata</strong> to map family ties, shared employers/schools/boards,
                     overlapping public-equity holdings, and to pull authoritative
-                    metadata (gender, photo, biography, signature). Two SQLite files are
+                    metadata (gender, photo, biography, signature). A third enrichment
+                    pass mines each person's <strong>Wikipedia article citations</strong>
+                    for dated news references — IPOs, lawsuits, deaths, acquisitions
+                    cited in their bio — so each profile carries a multi-decade news
+                    timeline without needing a paid news API. A fourth pass imports a
+                    public <strong>Kaggle dataset of Forbes annual rankings 2001-2024</strong>
+                    so the time-travel UI can reconstruct any year's ranking even before
+                    Bloomberg started tracking. Two SQLite files are
                     the source of truth: <code>bloomberg.db</code> for the scrape data,
+                    the news, and the historical Forbes rankings;
                     <code>network.db</code> for everything Wikidata-derived.
                     <a href="https://github.com/Jonas-a11y/bloomberg_scraper/">Github Page</a>
                 </p>
@@ -161,7 +170,18 @@
                     <code>query.wikidata.org</code> plus the <code>wbsearchentities</code>
                     REST API for QID resolution; Wikipedia's REST page summary endpoint
                     supplies thumbnail fallbacks when a person has no
-                    <code>P18</code> image.
+                    <code>P18</code> image. News comes from two sources: the
+                    Wikipedia <code>action=parse</code> API (raw wikitext for citation
+                    extraction, rate limit ~1 req/sec) and the
+                    <strong>GDELT 2.0 Doc API</strong> at
+                    <code>api.gdeltproject.org/api/v2/doc/doc</code> for recent news
+                    (free, keyless, ≥5s between requests, English filter applied).
+                    Historical Forbes rankings 2001-2024 come from the
+                    <a href="https://www.kaggle.com/datasets/guillemservera/forbes-billionaires-1997-2023">
+                    guillemservera/forbes-billionaires-1997-2023 Kaggle dataset</a>
+                    (CC0-1.0, 34k rows of monthly snapshots that we dedupe to
+                    one row per (year, rank) by max net worth). A small Wikipedia
+                    scraper handles years past the Kaggle freeze.
                 </p>
                 <p><strong>Fetching.</strong>
                     Bloomberg fingerprints non-browser TLS clients and serves a captcha
@@ -190,6 +210,28 @@
                         <code>wealth_history</code> — narrow daily series, primary key
                         <code>(person_id, date)</code>. Idempotent: backfilling and the
                         daily scrape both <code>INSERT OR REPLACE</code> into it.
+                    </li>
+                    <li>
+                        <code>news_articles</code> — one row per
+                        <code>(person_id, url)</code> citation. Carries
+                        <code>article_date</code>, <code>date_precision</code>
+                        ('day' / 'month' / 'year'), <code>title</code>,
+                        <code>source</code>, and an <code>importance</code> integer
+                        (see below). Sister table <code>news_fetched</code> tracks when
+                        each person was last hit and whether the historical backfill
+                        has run; <code>news_co_occurrence</code> stores per-URL
+                        bookkeeping so cross-person rescoring is idempotent.
+                    </li>
+                    <li>
+                        <code>historical_rankings</code> — annual Forbes lists,
+                        primary key <code>(source, year, rank)</code>. Stores
+                        <code>person_id</code> (NULLable for names not in our
+                        Bloomberg set), <code>name</code>, <code>net_worth_usd</code>,
+                        <code>citizenship</code>, <code>age</code>, <code>industry</code>,
+                        <code>notes</code>. Sources include <code>forbes_kaggle</code>
+                        (Kaggle dataset 2001-2024) and <code>forbes_world</code>
+                        (Wikipedia scrape, sparser, kept as fallback for years
+                        past the Kaggle freeze).
                     </li>
                 </ul>
                 <p>From <code>network.db</code> (Wikidata-derived, regenerated by the
@@ -231,15 +273,74 @@
                         through their shared positions.
                     </li>
                 </ul>
+                <p><strong>Time travel.</strong>
+                    The "as of [date]" slider on the Table tab unions
+                    Bloomberg's daily <code>wealth_history</code> with the
+                    annual <code>historical_rankings</code> snapshots. For
+                    each person we take the most recent observation
+                    at-or-before the target date across both sources;
+                    Bloomberg wins when both have data for that year because
+                    its dates are exact while Forbes years collapse to
+                    YYYY-12-31. Within Forbes, <code>forbes_kaggle</code> is
+                    preferred over the sparser <code>forbes_world</code>
+                    Wikipedia scrape. Rank is computed in Python by sorting
+                    the resulting per-person rows by net worth — that lets
+                    the slider reach back to 2001 even though Bloomberg
+                    history only goes to 2012. The diff mode runs two
+                    as-of queries side by side and computes entered/exited/
+                    rank-delta sets in a single pass.
+                </p>
+                <p><strong>News pipeline.</strong>
+                    News on each profile comes from two layers. <em>Historical
+                    timeline:</em> a one-time backfill fetches each person's
+                    Wikipedia article wikitext via the <code>action=parse</code>
+                    API and extracts every <code>{{cite news|...}}</code> /
+                    <code>{{cite web|...}}</code> template. URL, title, publisher
+                    domain, and date are pulled out of the citation parameters; date
+                    formats like "2018-03-12", "12 March 2018", "March 2018", and
+                    "2018" are all accepted but tagged with their precision so the
+                    chart can drop year/month-only fallbacks (those would land on a
+                    wealth value that wasn't real for that date). <em>Recent
+                    coverage:</em> a daily refresh hits GDELT for the last 30 days
+                    of each person's news, ~6s between calls to stay under their
+                    throttle. Articles dedupe on
+                    <code>(person_id, url)</code>; the news card mixes both sources
+                    transparently.
+                </p>
+                <p><strong>News importance scoring.</strong>
+                    Each article gets a heuristic score so the chart can surface the
+                    few genuinely interesting events instead of every passing
+                    mention. Components: a baseline of 4 for any Wikipedia citation
+                    (editorial inclusion is itself a signal); per-keyword bonuses
+                    on the title (<em>dies</em>, <em>lawsuit</em>, <em>indicted</em>,
+                    <em>acquires</em>, <em>resigns</em>, <em>divorce</em>, etc.); a
+                    +3 trusted-source bonus (Reuters, Bloomberg, WSJ, FT, NYT, FT,
+                    BBC, AP, Forbes, …); a citation-density bonus capped at +6 for
+                    URLs cited multiple times within the same Wikipedia article;
+                    and a cross-person co-occurrence bonus of +2 per additional
+                    billionaire whose page cites the same URL, capped at +12.
+                    "Rich list" articles ("Forbes 400", "Australia's Richest
+                    200") are detected by title pattern and excluded from
+                    keyword scoring — they're rankings, not events. The chart
+                    pins markers at day-precision dates only and renders the
+                    top 3 per year visible in the current range. The news card
+                    shows everything ordered chronologically with year-tab
+                    filters.
+                </p>
                 <p><strong>Schedule.</strong>
                     APScheduler runs cron-style jobs in-process. Each daily scrape pulls
                     the list page, writes to <code>persons</code> and <code>snapshots</code>,
-                    and appends today's row to <code>wealth_history</code>. Two follow-up
-                    jobs fire automatically a few seconds later: a wealth-history
-                    backfill for any newcomer profile, and a Wikidata catch-up that
-                    resolves QIDs for new persons and pulls their authoritative gender
-                    + photo + metadata. So a brand-new billionaire shows up correctly
-                    enriched within seconds of being scraped — no manual refresh needed.
+                    and appends today's row to <code>wealth_history</code>. Three
+                    follow-up jobs fire automatically a few seconds later: a
+                    wealth-history backfill for any newcomer profile, a Wikidata
+                    catch-up that resolves QIDs for new persons and pulls their
+                    authoritative gender + photo + metadata, and a news refresh
+                    that pulls the last 30 days from GDELT for everyone in the
+                    latest snapshot (skipping anyone fetched within the past 20h
+                    so the queue rotates through all 500 across days). Visiting
+                    a profile that's never had news fetched also kicks off a
+                    one-shot fetch in the background; the UI polls and renders
+                    articles as soon as they arrive.
                 </p>
                 <p><strong>Network refresh.</strong>
                     A separate manual job rebuilds the entire Wikidata graph end-to-end:
@@ -275,9 +376,11 @@
                 </p>
                 <p><strong>Stack.</strong>
                     FastAPI + Uvicorn (single port serves API and static frontend),
-                    SQLite × 2, APScheduler, curl_cffi for fetching, Wikidata SPARQL +
-                    Wikipedia REST for enrichment, Alpine.js + Chart.js + a custom
-                    force-directed canvas renderer for the UI. The whole thing fits in
+                    SQLite × 2, APScheduler for cron + post-scrape one-shot jobs,
+                    curl_cffi for fetching, Wikidata SPARQL +
+                    Wikipedia REST + GDELT 2.0 Doc API for enrichment,
+                    Alpine.js + Chart.js + a custom force-directed canvas renderer
+                    for the UI. Pytest for the test suite. The whole thing fits in
                     one Docker container with a mounted volume for the databases.
                 </p>
             </div>
@@ -285,8 +388,175 @@
     </main>
 
     <!-- Table Tab -->
-    <main x-show="tab === 'table'">
-        <div class="movers-strip" x-show="tableData.data.length > 0">
+    <main x-show="tab === 'table'" x-init="loadTableAsOfRange()">
+        <div class="time-travel-card" :class="{ 'compare-mode': tableDiffMode }">
+            <div class="time-travel-header">
+                <div class="time-travel-mode">
+                    <button :class="{ active: !tableDiffMode }" @click="tableDiffMode && toggleTableDiffMode()">Snapshot</button>
+                    <button :class="{ active: tableDiffMode }" @click="!tableDiffMode && toggleTableDiffMode()">Compare</button>
+                </div>
+                <div class="time-travel-headline" x-show="tableDiffMode && tableDiffData">
+                    <span class="muted small">Headline change:</span>
+                    <strong x-text="diffHeadline()"></strong>
+                </div>
+                <div class="time-travel-headline" x-show="!tableDiffMode && tableData?.data?.length">
+                    <span class="muted small">Top:</span>
+                    <strong x-text="tableData?.data?.[0]?.common_name + ' · ' + formatWealth(tableData?.data?.[0]?.net_worth_usd || 0)"></strong>
+                    <span class="muted small" x-show="tableAsOfDate" x-text="'as of ' + (tableAsOfDate || '')"></span>
+                </div>
+            </div>
+
+            <!-- Snapshot mode: single date picker with slider + year presets -->
+            <div class="time-travel-snapshot" x-show="!tableDiffMode">
+                <div class="tt-row">
+                    <input type="date" class="tt-date-big"
+                           x-model="tableAsOfDate"
+                           :min="tableAsOfMin" :max="tableAsOfMax"
+                           @change="loadTable()">
+                    <button class="btn-sm" x-show="tableAsOfDate" @click="clearTableAsOf()">Today</button>
+                </div>
+                <div class="tt-slider-wrap">
+                    <input type="range" class="tt-slider"
+                           :min="new Date(tableAsOfMin || '2001-01-01').getTime()"
+                           :max="new Date(tableAsOfMax || new Date().toISOString().slice(0,10)).getTime()"
+                           :value="tableAsOfDate ? new Date(tableAsOfDate).getTime() : new Date(tableAsOfMax || new Date().toISOString().slice(0,10)).getTime()"
+                           @input="setTableAsOf(new Date(parseInt($event.target.value)).toISOString().slice(0,10))">
+                    <div class="tt-tick-row">
+                        <template x-for="y in tableYearTicks()" :key="y">
+                            <span class="tt-tick" x-text="y"></span>
+                        </template>
+                    </div>
+                </div>
+                <div class="tt-presets">
+                    <span class="muted small">Quick jump:</span>
+                    <template x-for="p in tableYearPresets()" :key="p.label">
+                        <button class="btn-sm"
+                                :class="{ active: (p.date === '' && !tableAsOfDate) || (p.date && tableAsOfDate && p.date.slice(0,4) === tableAsOfDate.slice(0,4)) }"
+                                @click="setTableAsOf(p.date)" x-text="p.label"></button>
+                    </template>
+                </div>
+            </div>
+
+            <!-- Compare mode: two date pickers + headline + diff results -->
+            <div class="time-travel-compare" x-show="tableDiffMode">
+                <div class="tt-compare-row">
+                    <div class="tt-compare-side">
+                        <span class="muted small tt-side-label">From</span>
+                        <input type="date" class="tt-date-big"
+                               x-model="tableDiffFrom"
+                               :min="tableAsOfMin" :max="tableAsOfMax"
+                               @change="runTableDiff()">
+                    </div>
+                    <span class="tt-compare-arrow" aria-hidden="true">→</span>
+                    <div class="tt-compare-side">
+                        <span class="muted small tt-side-label">To</span>
+                        <input type="date" class="tt-date-big"
+                               x-model="tableDiffTo"
+                               :min="tableAsOfMin" :max="tableAsOfMax"
+                               @change="runTableDiff()">
+                    </div>
+                </div>
+                <div class="tt-presets">
+                    <span class="muted small">Compare span:</span>
+                    <template x-for="p in tableComparePresets()" :key="p.label">
+                        <button class="btn-sm" @click="setComparePreset(p)" x-text="p.label"></button>
+                    </template>
+                </div>
+
+                <div class="tt-diff-stats" x-show="tableDiffData">
+                    <div class="tt-stat">
+                        <span class="tt-stat-value" x-text="(tableDiffData?.entered?.length || 0) + (tableDiffData?.entered?.length === 50 ? '+' : '')"></span>
+                        <span class="tt-stat-label">entered top 100</span>
+                    </div>
+                    <div class="tt-stat">
+                        <span class="tt-stat-value" x-text="(tableDiffData?.exited?.length || 0) + (tableDiffData?.exited?.length === 50 ? '+' : '')"></span>
+                        <span class="tt-stat-label">exited top 100</span>
+                    </div>
+                    <div class="tt-stat">
+                        <span class="tt-stat-value positive" x-text="diffTotalGains()"></span>
+                        <span class="tt-stat-label">total gained (top 10)</span>
+                    </div>
+                    <div class="tt-stat">
+                        <span class="tt-stat-value negative" x-text="diffTotalLosses()"></span>
+                        <span class="tt-stat-label">total lost (top 10)</span>
+                    </div>
+                </div>
+
+                <div class="diff-cols" x-show="tableDiffData">
+                    <div class="diff-col">
+                        <h4>Entered the top 100</h4>
+                        <ul>
+                            <template x-for="r in (tableDiffData?.entered || []).slice(0, tableDiffShowCount)" :key="'e-' + (r.person_id || r.common_name)">
+                                <li>
+                                    <span :class="r.person_id ? 'metric-link' : 'muted'"
+                                          @click="r.person_id && openProfile(r.person_id)"
+                                          x-text="'#' + r.rank + ' ' + r.common_name"></span>
+                                    <span class="muted small" x-text="formatWealth(r.net_worth_usd)"></span>
+                                </li>
+                            </template>
+                            <li class="muted small" x-show="!tableDiffData?.entered?.length">No new entrants.</li>
+                        </ul>
+                    </div>
+                    <div class="diff-col">
+                        <h4>Exited the top 100</h4>
+                        <ul>
+                            <template x-for="r in (tableDiffData?.exited || []).slice(0, tableDiffShowCount)" :key="'x-' + (r.person_id || r.common_name)">
+                                <li>
+                                    <span :class="r.person_id ? 'metric-link' : 'muted'"
+                                          @click="r.person_id && openProfile(r.person_id)"
+                                          x-text="'was #' + r.rank + ' ' + r.common_name"></span>
+                                    <span class="muted small" x-text="formatWealth(r.net_worth_usd)"></span>
+                                </li>
+                            </template>
+                            <li class="muted small" x-show="!tableDiffData?.exited?.length">No drop-offs.</li>
+                        </ul>
+                    </div>
+                    <div class="diff-col">
+                        <h4>Biggest gainers</h4>
+                        <ul>
+                            <template x-for="r in (tableDiffData?.top_gainers || []).slice(0, tableDiffShowCount)" :key="'g-' + (r.person_id || r.common_name)">
+                                <li>
+                                    <span :class="r.person_id ? 'metric-link' : 'muted'"
+                                          @click="r.person_id && openProfile(r.person_id)"
+                                          x-text="r.common_name"></span>
+                                    <span class="diff-row-meta">
+                                        <span class="positive small" x-text="formatChange(r.worth_change)"></span>
+                                        <span class="diff-rank-badge" x-show="r.rank_change > 0"
+                                              x-text="'↑' + r.rank_change"></span>
+                                        <span class="diff-rank-badge negative" x-show="r.rank_change < 0"
+                                              x-text="'↓' + Math.abs(r.rank_change)"></span>
+                                    </span>
+                                </li>
+                            </template>
+                        </ul>
+                    </div>
+                    <div class="diff-col">
+                        <h4>Biggest losers</h4>
+                        <ul>
+                            <template x-for="r in (tableDiffData?.top_losers || []).slice(0, tableDiffShowCount)" :key="'l-' + (r.person_id || r.common_name)">
+                                <li>
+                                    <span :class="r.person_id ? 'metric-link' : 'muted'"
+                                          @click="r.person_id && openProfile(r.person_id)"
+                                          x-text="r.common_name"></span>
+                                    <span class="diff-row-meta">
+                                        <span class="negative small" x-text="formatChange(r.worth_change)"></span>
+                                        <span class="diff-rank-badge negative" x-show="r.rank_change < 0"
+                                              x-text="'↓' + Math.abs(r.rank_change)"></span>
+                                        <span class="diff-rank-badge" x-show="r.rank_change > 0"
+                                              x-text="'↑' + r.rank_change"></span>
+                                    </span>
+                                </li>
+                            </template>
+                        </ul>
+                    </div>
+                </div>
+                <div class="tt-show-more" x-show="tableDiffData && tableDiffShowCount < 50">
+                    <button class="btn-sm" @click="tableDiffShowCount = 50">Show more</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="movers-strip" x-show="tableData.data.length > 0 && !tableAsOfDate">
             <div class="movers-col">
                 <h4>Top gainers today</h4>
                 <ul>
@@ -351,8 +621,10 @@
                     </tr>
                 </thead>
                 <tbody>
-                    <template x-for="b in tableData.data" :key="b.person_id">
-                        <tr @click="openPanel(b.person_id)" class="clickable-row">
+                    <template x-for="(b, idx) in tableData.data" :key="b.person_id || ('forbes-' + idx)">
+                        <tr @click="b.person_id && openPanel(b.person_id)"
+                            :class="{ 'clickable-row': b.person_id, 'historical-row': !b.person_id }"
+                            :title="!b.person_id ? 'Historical Forbes record — no Bloomberg profile' : ''">
                             <template x-for="c in tableColumns.filter(c => isColumnVisible(c.key))" :key="c.key">
                                 <td :class="cellClass(b, c)" x-text="formatCell(b, c)"></td>
                             </template>
@@ -435,6 +707,211 @@
             <div class="aggregate-card">
                 <h3>Age Distribution</h3>
                 <div class="chart-wrap"><canvas id="ageChart"></canvas></div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Insights Tab -->
+    <main x-show="tab === 'insights'">
+        <div class="insights-filter-bar">
+            <div class="insights-filter-bar-left">
+                <strong>Insights</strong>
+                <span class="muted small" x-text="(insightsFilters.country || insightsFilters.industry) ? 'Filtered' : 'All billionaires'"></span>
+                <span class="filter-chip" x-show="insightsFilters.country">
+                    <span x-text="insightsFilters.country"></span>
+                    <button @click="setInsightsCountry('')">×</button>
+                </span>
+                <span class="filter-chip" x-show="insightsFilters.industry">
+                    <span x-text="insightsFilters.industry"></span>
+                    <button @click="setInsightsIndustry('')">×</button>
+                </span>
+                <button class="btn-sm" x-show="insightsFilters.country || insightsFilters.industry"
+                        @click="clearInsightsFilters()">Clear</button>
+            </div>
+            <div class="insights-filter-bar-right">
+                <label>Year range:</label>
+                <input type="number" x-model.number="insightsFilters.yearFrom" @change="loadInsights()" min="2001" max="2026" class="insights-year-input">
+                <span class="muted small">→</span>
+                <input type="number" x-model.number="insightsFilters.yearTo" @change="loadInsights()" min="2001" max="2026" class="insights-year-input">
+            </div>
+        </div>
+
+        <div class="insights-grid">
+            <!-- Bar chart race -->
+            <div class="insights-card insights-card-wide">
+                <div class="insights-card-header">
+                    <h3>Top 10 over time<span class="help-icon" title="Animated bar-chart race of the top 12 wealthiest people each month from 2001 to today. Bars are colored by industry. Bloomberg daily data is collapsed to monthly observations; gaps are filled with annual Forbes anchors and the values between months are linearly interpolated. Click ▶ to play, click any bar to open the profile.">?</span></h3>
+                    <div class="insights-card-controls">
+                        <button class="btn-sm" @click="toggleRacePlay()"
+                                x-text="insightsRacePlaying ? '⏸ Pause' : '▶ Play'"></button>
+                        <span class="insights-race-year" x-text="raceCurrentYearLabel()"></span>
+                        <input type="range" min="0" max="1000"
+                               :value="raceSliderValue()"
+                               @input="setRaceSliderValue($event.target.value)"
+                               style="flex: 1; min-width: 140px;">
+                    </div>
+                </div>
+                <div class="race-canvas-wrap"><canvas id="insightsRaceChart"></canvas></div>
+                <div class="race-legend">
+                    <span class="muted small">Color = industry:</span>
+                    <template x-for="ind in raceIndustriesInFrame()" :key="ind.name">
+                        <span class="race-legend-chip">
+                            <span class="race-legend-swatch" :style="`background:${ind.color}`"></span>
+                            <span x-text="ind.name"></span>
+                        </span>
+                    </template>
+                </div>
+            </div>
+
+            <!-- Count over time -->
+            <div class="insights-card insights-card-wide">
+                <div class="insights-card-header">
+                    <h3>Number of billionaires over time<span class="help-icon" title="How the count of billionaires has grown each year, broken down by country or industry. Click any line to filter every chart on this tab to that country/industry.">?</span></h3>
+                    <div class="insights-card-controls">
+                        <select x-model="insightsCountBy" @change="loadInsightsCount()" class="insights-select">
+                            <option value="country">By country</option>
+                            <option value="industry">By industry</option>
+                            <option value="total">Total</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="chart-wrap-tall"><canvas id="insightsCountChart"></canvas></div>
+                <p class="muted small" style="margin-top: 6px;">
+                    Click a country/industry line to filter every chart on this tab.
+                </p>
+            </div>
+
+            <!-- Inequality -->
+            <div class="insights-card">
+                <div class="insights-card-header">
+                    <h3>Inequality within the list<span class="help-icon" title="How unequal the wealth distribution is among billionaires themselves. Gini (purple, 0–1) measures spread: 0 = everyone equal, 1 = one person has it all. Top-10 share (orange) is the % of total billionaire wealth held by the 10 richest. Top-10 share falls as the list grows even when individual fortunes grow.">?</span></h3>
+                </div>
+                <div class="chart-wrap"><canvas id="insightsInequalityChart"></canvas></div>
+                <p class="muted small" style="margin-top: 6px;">
+                    Gini coefficient (purple) and top-10 share (orange).
+                    Higher Gini = more spread. Top-10 share falls as the list grows.
+                </p>
+            </div>
+
+            <!-- Cohort survival -->
+            <div class="insights-card">
+                <div class="insights-card-header">
+                    <h3>Class of <input type="number" x-model.number="insightsCohortYear" @change="loadInsightsCohort()" min="2001" max="2024" class="insights-year-input"><span class="help-icon" title="What happened to the top 100 billionaires from this year. 'Still listed' = on Bloomberg's current top 500. 'Dropped off' = was in Bloomberg's tracking but no longer in the latest snapshot. 'Died' = Wikidata records a death date. 'Never tracked' = on the Forbes list that year but Bloomberg never picked them up.">?</span></h3>
+                </div>
+                <template x-if="insightsCohortSurvival">
+                    <div class="cohort-stats">
+                        <div class="cohort-stat cohort-still">
+                            <span class="cohort-num" x-text="insightsCohortSurvival.counts.still_listed"></span>
+                            <span class="cohort-label">still listed</span>
+                        </div>
+                        <div class="cohort-stat cohort-dropped">
+                            <span class="cohort-num" x-text="insightsCohortSurvival.counts.dropped"></span>
+                            <span class="cohort-label">dropped off</span>
+                        </div>
+                        <div class="cohort-stat cohort-died">
+                            <span class="cohort-num" x-text="insightsCohortSurvival.counts.died"></span>
+                            <span class="cohort-label">died</span>
+                        </div>
+                        <div class="cohort-stat cohort-untracked">
+                            <span class="cohort-num" x-text="insightsCohortSurvival.counts.never_tracked"></span>
+                            <span class="cohort-label">never tracked</span>
+                        </div>
+                    </div>
+                </template>
+                <div class="cohort-bar-wrap" x-show="insightsCohortSurvival">
+                    <div class="cohort-bar">
+                        <span class="cohort-seg cohort-still" :style="`flex: ${insightsCohortSurvival?.counts?.still_listed || 0}`"></span>
+                        <span class="cohort-seg cohort-dropped" :style="`flex: ${insightsCohortSurvival?.counts?.dropped || 0}`"></span>
+                        <span class="cohort-seg cohort-died" :style="`flex: ${insightsCohortSurvival?.counts?.died || 0}`"></span>
+                        <span class="cohort-seg cohort-untracked" :style="`flex: ${insightsCohortSurvival?.counts?.never_tracked || 0}`"></span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Source gap -->
+            <div class="insights-card">
+                <div class="insights-card-header">
+                    <h3>Forbes vs Bloomberg disagreements<span class="help-icon" title="Per-person comparison: Forbes's annual estimate vs Bloomberg's daily mark-to-market for the same person at year-end. Sorted by absolute % gap. Big gaps usually mean private-asset valuation differences (Forbes is conservative on private equity) or stock moves Forbes hadn't yet baked in.">?</span></h3>
+                    <span class="muted small" x-text="insightsSourceGap ? insightsSourceGap.year + ' · ' + insightsSourceGap.total_compared + ' compared' : ''"></span>
+                </div>
+                <ul class="source-gap-list" x-show="insightsSourceGap?.pairs?.length">
+                    <template x-for="p in (insightsSourceGap?.pairs || []).slice(0, 10)" :key="p.person_id">
+                        <li class="source-gap-row">
+                            <span class="metric-link" @click="p.person_id && openProfile(p.person_id)" x-text="p.name"></span>
+                            <span class="source-gap-vals">
+                                <span class="muted small">F: $<span x-text="(p.forbes_worth/1e9).toFixed(0)"></span>B</span>
+                                <span class="muted small">B: $<span x-text="(p.bloomberg_worth/1e9).toFixed(0)"></span>B</span>
+                                <span class="source-gap-pct"
+                                      :class="p.gap_pct >= 0 ? 'positive' : 'negative'"
+                                      x-text="(p.gap_pct >= 0 ? '+' : '') + p.gap_pct.toFixed(0) + '%'"></span>
+                            </span>
+                        </li>
+                    </template>
+                </ul>
+            </div>
+
+            <!-- Correlation heatmap -->
+            <div class="insights-card insights-card-wide">
+                <div class="insights-card-header">
+                    <h3>Pairwise wealth correlation (top
+                        <input type="number" x-model.number="insightsCorrelationN" @change="loadInsightsCorrelation()" min="5" max="50" class="insights-year-input">,
+                        <input type="number" x-model.number="insightsCorrelationDays" @change="loadInsightsCorrelation()" min="30" max="3650" class="insights-year-input"> days)<span class="help-icon" title="Pearson correlation of daily log-returns for every pair of top-N billionaires over the chosen window. Pairs with r ≈ 1 move in lockstep — usually because they share underlying assets (Page+Brin both Alphabet, Walton heirs all WMT, co-founders of the same company). Discovered from data alone, no domain knowledge.">?</span>
+                    </h3>
+                </div>
+                <div class="corr-layout">
+                    <div id="insightsCorrHeatmap" class="corr-heatmap"></div>
+                    <div class="corr-pairs">
+                        <h4>Strongest pairs</h4>
+                        <ul>
+                            <template x-for="p in (insightsCorrelation?.pairs || []).slice(0, 8)" :key="p.a_id + '-' + p.b_id">
+                                <li>
+                                    <span class="corr-r" x-text="(p.r > 0 ? '+' : '') + p.r.toFixed(2)"
+                                          :class="p.r >= 0.95 ? 'corr-r-strong' : ''"></span>
+                                    <span class="metric-link" @click="openProfile(p.a_id)" x-text="p.a_name"></span>
+                                    <span class="muted small">⟷</span>
+                                    <span class="metric-link" @click="openProfile(p.b_id)" x-text="p.b_name"></span>
+                                </li>
+                            </template>
+                        </ul>
+                        <p class="muted small">High correlation often signals shared underlying assets — co-founders, family heirs, same stock.</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Geographic migration -->
+            <div class="insights-card insights-card-wide">
+                <div class="insights-card-header">
+                    <h3>Geographic migration<span class="help-icon" title="Where billionaires were born vs where they currently live, derived from Wikidata. Top cross-border flows shows the largest birth → residence movements (e.g. Russia → UK, China → Singapore). Top residence countries lists where billionaire wealth is concentrated today. Click a country to filter the rest of the dashboard.">?</span></h3>
+                </div>
+                <div class="migration-layout">
+                    <div class="migration-col">
+                        <h4>Top cross-border flows</h4>
+                        <ul>
+                            <template x-for="f in topMigrationFlows(10)" :key="f.birth + f.residence">
+                                <li>
+                                    <span class="migration-route">
+                                        <strong x-text="f.birth"></strong>
+                                        <span class="muted">→</span>
+                                        <strong x-text="f.residence"></strong>
+                                    </span>
+                                    <span class="muted small" x-text="f.count + ' · $' + (f.total_wealth_usd/1e9).toFixed(0) + 'B'"></span>
+                                </li>
+                            </template>
+                        </ul>
+                    </div>
+                    <div class="migration-col">
+                        <h4>Top residence countries</h4>
+                        <ul>
+                            <template x-for="n in topResidenceCountries(10)" :key="n.country">
+                                <li>
+                                    <span :class="{'metric-link': true, 'active': insightsFilters.country === n.country}"
+                                          @click="setInsightsCountry(n.country)" x-text="n.country"></span>
+                                    <span class="muted small" x-text="n.persons + ' · $' + (n.wealth/1e9).toFixed(0) + 'B'"></span>
+                                </li>
+                            </template>
+                        </ul>
+                    </div>
+                </div>
             </div>
         </div>
     </main>
@@ -947,7 +1424,8 @@
                              :alt="profile.common_name + ' (Wikipedia / Wikimedia Commons)'">
                         <div style="flex: 1;">
                             <p class="muted small" style="margin-bottom: 4px;">
-                                <a href="#tab=table" class="metric-link">← Back to table</a>
+                                <a href="#" class="metric-link"
+                                   @click.prevent="profileGoBack()">← Back</a>
                             </p>
                             <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
                                 <h2 x-text="profile.common_name" style="margin: 0;"></h2>
@@ -984,16 +1462,44 @@
                 </div>
 
                 <div class="aggregate-card" x-show="profile.history && profile.history.length">
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; gap: 12px; flex-wrap: wrap;">
                         <h3 style="margin: 0;">Net worth history</h3>
+                        <div class="range-change" x-show="profileRangeChange()">
+                            <span class="range-change-pct"
+                                  :class="profileRangeChange()?.percent >= 0 ? 'positive' : 'negative'"
+                                  x-text="(profileRangeChange()?.percent >= 0 ? '+' : '') + (profileRangeChange()?.percent ?? 0).toFixed(1) + '%'"></span>
+                            <span class="range-change-abs muted small"
+                                  x-text="formatChange(profileRangeChange()?.absolute || 0)"></span>
+                            <span class="muted small range-change-period"
+                                  x-text="profileRange === 'ALL' ? 'all-time' : profileRange.toLowerCase()"></span>
+                        </div>
+                        <span class="muted small" x-show="profile.last_seen_at"
+                              x-text="'Updated ' + formatRelativeTime(profile.last_seen_at)"></span>
                         <div class="range-tabs">
                             <template x-for="r in ['YTD','6M','1Y','3Y','All']" :key="r">
                                 <button :class="{ active: profileRange === (r === 'All' ? 'ALL' : r) }"
                                         @click="setProfileRange(r === 'All' ? 'ALL' : r)" x-text="r"></button>
                             </template>
                         </div>
+                        <button class="btn-sm news-toggle" x-show="profile.news && profile.news.length"
+                                @click="toggleProfileNews()"
+                                :class="{ active: profileShowNews }"
+                                :title="profileShowNews ? 'Click to hide news markers' : 'Click to show news markers'">
+                            <span class="news-toggle-dot"></span>
+                            News
+                        </button>
                     </div>
                     <div class="chart-wrap-tall"><canvas id="profileChart"></canvas></div>
+                    <div class="chart-footnote muted small" x-show="profileTrackingStart()">
+                        ⓘ Bloomberg wealth tracking begins
+                        <span x-text="profileTrackingStart()"></span>.
+                        Earlier net-worth history is not shown — most billionaires were
+                        already wealthy before this date.
+                    </div>
+                    <div class="out-of-range-hint" x-show="profileOutOfRangeCount() > 0">
+                        <span x-text="profileOutOfRangeCount() + ' significant ' + (profileOutOfRangeCount() === 1 ? 'event' : 'events') + ' outside this range'"></span>
+                        <button class="btn-sm" @click="setProfileRange('ALL')">Show all</button>
+                    </div>
                 </div>
 
                 <div class="profile-grid">
@@ -1087,7 +1593,18 @@
                     <div class="aggregate-card" x-show="profileSchools.length > 0">
                         <h3>Education</h3>
                         <ul class="metric-sublist">
-                            <template x-for="s in profileSchools" :key="s"><li x-text="s"></li></template>
+                            <template x-for="s in profileSchools" :key="s">
+                                <li>
+                                    <template x-if="profileEntityIdByName(s)">
+                                        <span class="metric-link"
+                                              @click="openEntityPanel(profileEntityIdByName(s)); tab = 'families'"
+                                              x-text="s"></span>
+                                    </template>
+                                    <template x-if="!profileEntityIdByName(s)">
+                                        <span x-text="s"></span>
+                                    </template>
+                                </li>
+                            </template>
                         </ul>
                     </div>
 
@@ -1101,6 +1618,49 @@
                                 </div>
                             </template>
                         </div>
+                    </div>
+
+                    <div class="aggregate-card"
+                         x-show="(profile.news && profile.news.length > 0) || profileNewsFetching">
+                        <div style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; gap: 8px; flex-wrap: wrap;">
+                            <h3 style="margin: 0;">News coverage</h3>
+                            <span class="muted small" style="flex: 1;">
+                                <span x-text="profileNewsRangeLabel()"></span>
+                                <span x-show="profile.news_fetched_at"
+                                      x-text="' · updated ' + formatRelativeTime(profile.news_fetched_at)"></span>
+                            </span>
+                            <button class="btn-sm" @click="refreshProfileNews()" :disabled="profileNewsFetching"
+                                    x-text="profileNewsFetching ? 'Fetching…' : 'Refresh'"></button>
+                        </div>
+                        <div x-show="profileNewsFetching && (!profile.news || !profile.news.length)" class="muted small" style="padding: 12px 0;">
+                            Fetching news from Wikipedia citations… This usually takes a few seconds.
+                        </div>
+                        <div class="news-year-tabs" x-show="profileNewsYears().length > 1">
+                            <button :class="{ active: profileNewsYearFilter === 'all' }"
+                                    @click="profileNewsYearFilter = 'all'">All</button>
+                            <template x-for="y in profileNewsYears()" :key="y">
+                                <button :class="{ active: profileNewsYearFilter === y }"
+                                        @click="profileNewsYearFilter = y"
+                                        x-text="y"></button>
+                            </template>
+                        </div>
+                        <ul class="news-list">
+                            <template x-for="n in profileNewsForCard()" :key="n.url">
+                                <li class="news-item">
+                                    <a :href="n.url" target="_blank" rel="noopener" x-text="n.title"></a>
+                                    <div class="news-meta">
+                                        <span x-text="formatNewsDate(n)"></span>
+                                        <span x-show="n.source" class="muted"> · </span>
+                                        <span x-show="n.source" x-text="n.source" class="muted"></span>
+                                    </div>
+                                </li>
+                            </template>
+                        </ul>
+                        <button class="btn-sm news-show-more"
+                                x-show="profileNewsHasMore()"
+                                @click="profileNewsLimit += 20">
+                            Show more
+                        </button>
                     </div>
 
                     <div class="aggregate-card" x-show="profileAssets.public.length > 0 || profileAssets.private.length > 0 || profile.cash_assets_total || profile.liabilities_value">
@@ -1140,7 +1700,14 @@
                                 <h5>Private Holdings</h5>
                                 <template x-for="a in profileAssets.private" :key="a.name">
                                     <div class="asset-row">
-                                        <span x-text="a.name"></span>
+                                        <template x-if="profileEntityIdByName(a.name)">
+                                            <span class="metric-link"
+                                                  @click="openEntityPanel(profileEntityIdByName(a.name)); tab = 'families'"
+                                                  x-text="a.name"></span>
+                                        </template>
+                                        <template x-if="!profileEntityIdByName(a.name)">
+                                            <span x-text="a.name"></span>
+                                        </template>
                                         <span x-text="formatWealth(a.value)"></span>
                                     </div>
                                 </template>
@@ -1364,16 +1931,17 @@
         </template>
     </aside>
 
-    <script src="/js/format.js?v=2"></script>
+    <script src="/js/format.js?v=4"></script>
     <script src="/js/charts.js?v=10"></script>
     <script src="/js/tabs/dashboard.js?v=6"></script>
-    <script src="/js/tabs/table.js?v=2"></script>
+    <script src="/js/tabs/table.js?v=5"></script>
     <script src="/js/tabs/analytics.js?v=4"></script>
     <script src="/js/tabs/families.js?v=6"></script>
     <script src="/js/tabs/scraper.js?v=1"></script>
     <script src="/js/tabs/export.js?v=1"></script>
     <script src="/js/tabs/panel.js?v=5"></script>
-    <script src="/js/tabs/profile.js?v=3"></script>
-    <script src="/app.js?v=33"></script>
+    <script src="/js/tabs/profile.js?v=25"></script>
+    <script src="/js/tabs/insights.js?v=7"></script>
+    <script src="/app.js?v=35"></script>
 </body>
 </html>
