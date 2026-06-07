@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Bloomberg Scraper</title>
-    <link rel="stylesheet" href="/style.css?v=48">
+    <link rel="stylesheet" href="/style.css?v=49">
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
     <script src="https://cdn.jsdelivr.net/npm/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
@@ -943,7 +943,7 @@
                     Billionaires
                 </button>
                 <button :class="{ active: deepDiveTab === 'market' }"
-                        @click="deepDiveTab = 'market'; if (!deepDiveMarket) fetchDeepDiveMarket(); else $nextTick(() => renderDeepDiveTreemap())">
+                        @click="deepDiveTab = 'market'; if (!deepDiveMarket) fetchDeepDiveMarket(); else $nextTick(() => { renderDeepDiveTreemap(); renderDeepDiveDonut(); })">
                     Public market
                 </button>
             </div>
@@ -1006,30 +1006,44 @@
                         </p>
 
                         <!-- Sector / country breakdown -->
-                        <template x-if="deepDiveKind === 'country' && deepDiveMarket.sectors?.length">
-                            <div>
+                        <!-- Sector / country breakdown — rendered as a
+                             donut, with a small swatch list beside it. -->
+                        <template x-if="deepDiveKind === 'country' && deepDiveMarket?.sectors?.length">
+                            <div class="deep-dive-donut-row">
                                 <h4 class="deep-dive-section-h">Sector breakdown</h4>
-                                <ul class="deep-dive-breakdown">
-                                    <template x-for="s in deepDiveMarket.sectors" :key="s.name">
-                                        <li>
-                                            <span x-text="s.name"></span>
-                                            <span class="muted small" x-text="(s.share*100).toFixed(0) + '% · ' + formatWealth(s.market_cap_usd)"></span>
-                                        </li>
-                                    </template>
-                                </ul>
+                                <div class="deep-dive-donut-wrap">
+                                    <canvas id="deepDiveSectorDonut"></canvas>
+                                    <ul class="deep-dive-donut-legend">
+                                        <template x-for="s in deepDiveMarket.sectors" :key="s.name">
+                                            <li>
+                                                <span class="deep-dive-donut-swatch"
+                                                      :style="'background:' + sectorColor(s.name)"></span>
+                                                <span x-text="s.name"></span>
+                                                <span class="muted small"
+                                                      x-text="(s.share*100).toFixed(0) + '% · ' + formatWealth(s.market_cap_usd)"></span>
+                                            </li>
+                                        </template>
+                                    </ul>
+                                </div>
                             </div>
                         </template>
-                        <template x-if="deepDiveKind === 'industry' && deepDiveMarket.countries?.length">
-                            <div>
+                        <template x-if="deepDiveKind === 'industry' && deepDiveMarket?.countries?.length">
+                            <div class="deep-dive-donut-row">
                                 <h4 class="deep-dive-section-h">Top markets</h4>
-                                <ul class="deep-dive-breakdown">
-                                    <template x-for="c in deepDiveMarket.countries" :key="c.name">
-                                        <li>
-                                            <span x-text="c.name"></span>
-                                            <span class="muted small" x-text="(c.share*100).toFixed(0) + '% · ' + formatWealth(c.market_cap_usd)"></span>
-                                        </li>
-                                    </template>
-                                </ul>
+                                <div class="deep-dive-donut-wrap">
+                                    <canvas id="deepDiveCountryDonut"></canvas>
+                                    <ul class="deep-dive-donut-legend">
+                                        <template x-for="c in deepDiveMarket.countries" :key="c.name">
+                                            <li>
+                                                <span class="deep-dive-donut-swatch"
+                                                      :style="'background:' + sectorColor(c.name)"></span>
+                                                <span x-text="c.name"></span>
+                                                <span class="muted small"
+                                                      x-text="(c.share*100).toFixed(0) + '% · ' + formatWealth(c.market_cap_usd)"></span>
+                                            </li>
+                                        </template>
+                                    </ul>
+                                </div>
                             </div>
                         </template>
 
@@ -2195,7 +2209,7 @@
     <script src="/js/tabs/export.js?v=1"></script>
     <script src="/js/tabs/panel.js?v=5"></script>
     <script src="/js/tabs/profile.js?v=25"></script>
-    <script src="/js/tabs/insights.js?v=10"></script>
+    <script src="/js/tabs/insights.js?v=12"></script>
     <script src="/app.js?v=36"></script>
 </body>
 </html>

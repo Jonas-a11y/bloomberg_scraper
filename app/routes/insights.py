@@ -422,16 +422,37 @@ def top_over_time_series(
     forbes_series = defaultdict(list)
     forbes_unlinked_series = defaultdict(list)
     if pids or name_keys:
-        for r in conn.execute(
-            """
+        # Restrict to the union — without this, the country/industry
+        # filter is silently lost: forbes_series picks up anchors for
+        # every person in historical_rankings, then `all_keys =
+        # bloom_series | forbes_series` re-includes them in the output.
+        # We accept rows where person_id ∈ pids OR (person_id IS NULL
+        # AND name matches one of our name_keys).
+        clauses = ["source = 'forbes_kaggle'", "year BETWEEN ? AND ?"]
+        params = [year_from, year_to]
+        union_clauses = []
+        if pids:
+            ph = ",".join("?" * len(pids))
+            union_clauses.append(f"person_id IN ({ph})")
+            params.extend(pids)
+        if name_keys:
+            # name_keys are stored as "name:Some Name" — strip the prefix.
+            names = [k[5:] for k in name_keys if k.startswith("name:")]
+            if names:
+                ph = ",".join("?" * len(names))
+                union_clauses.append(
+                    f"(person_id IS NULL AND name IN ({ph}))"
+                )
+                params.extend(names)
+        if union_clauses:
+            clauses.append("(" + " OR ".join(union_clauses) + ")")
+        sql = f"""
             SELECT person_id, name, year, net_worth_usd, citizenship,
                    industry, source
             FROM historical_rankings
-            WHERE source = 'forbes_kaggle'
-              AND year BETWEEN ? AND ?
-            """,
-            (year_from, year_to),
-        ).fetchall():
+            WHERE {' AND '.join(clauses)}
+        """
+        for r in conn.execute(sql, params).fetchall():
             anchor = {"ym": f"{r['year']}-12", "v": r["net_worth_usd"]}
             if r["person_id"]:
                 forbes_series[r["person_id"]].append(anchor)

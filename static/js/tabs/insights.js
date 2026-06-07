@@ -1052,7 +1052,10 @@ function insightsMixin() {
                 this.deepDiveMarket = data;
                 // Treemap is the primary view of the market tab; render on
                 // the next tick so the canvas is in the DOM.
-                this.$nextTick(() => this.renderDeepDiveTreemap());
+                this.$nextTick(() => {
+                    this.renderDeepDiveTreemap();
+                    this.renderDeepDiveDonut();
+                });
             } catch (e) {
                 this.deepDiveMarket = { error: String(e) };
             }
@@ -1061,6 +1064,15 @@ function insightsMixin() {
         renderDeepDiveTreemap() {
             const canvas = document.getElementById('deepDiveTreemap');
             if (!canvas || !this.deepDiveMarket?.companies) return;
+            // The canvas may exist in the DOM but still have zero
+            // dimensions if its `x-show` parent hasn't been painted yet
+            // (Alpine sets `display:none` synchronously on hide). Defer
+            // a frame and retry — the canvas will have its computed
+            // size by then.
+            if (canvas.clientWidth === 0 || canvas.clientHeight === 0) {
+                requestAnimationFrame(() => this.renderDeepDiveTreemap());
+                return;
+            }
             this._deepDiveTreemapTiles = _drawMarketTreemap(
                 canvas, this.deepDiveMarket.companies,
             );
@@ -1098,6 +1110,71 @@ function insightsMixin() {
                     resizeTimer = setTimeout(() => this.renderDeepDiveTreemap(), 200);
                 });
             }
+        },
+
+        // Color used by both the treemap and the donut legend so the
+        // two read as the same picture (Tech teal in both views, etc).
+        sectorColor(name) {
+            return _industryColor(name || 'Other');
+        },
+
+        renderDeepDiveDonut() {
+            // Pick the right slice set + canvas for the current tab.
+            // Country deep-dive → sectors; industry deep-dive → countries.
+            const data = this.deepDiveMarket;
+            if (!data) return;
+            let slices, canvasId;
+            if (this.deepDiveKind === 'country' && data.sectors?.length) {
+                slices = data.sectors;
+                canvasId = 'deepDiveSectorDonut';
+            } else if (this.deepDiveKind === 'industry' && data.countries?.length) {
+                slices = data.countries;
+                canvasId = 'deepDiveCountryDonut';
+            } else {
+                return;
+            }
+            const canvas = document.getElementById(canvasId);
+            if (!canvas) return;
+            // Same x-show race as the treemap: defer until paint.
+            if (canvas.clientWidth === 0 || canvas.clientHeight === 0) {
+                requestAnimationFrame(() => this.renderDeepDiveDonut());
+                return;
+            }
+            // Rebuild the chart on every render (the canvas may have
+            // been re-attached by Alpine after a tab switch).
+            const prev = _insightsCharts.get(canvasId);
+            if (prev) prev.destroy();
+            const chart = new Chart(canvas, {
+                type: 'doughnut',
+                data: {
+                    labels: slices.map(s => s.name),
+                    datasets: [{
+                        data: slices.map(s => s.market_cap_usd || 0),
+                        backgroundColor: slices.map(s => _industryColor(s.name)),
+                        borderColor: '#fff',
+                        borderWidth: 2,
+                    }],
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    cutout: '60%',
+                    animation: { duration: 250 },
+                    plugins: {
+                        legend: { display: false },  // we render our own legend
+                        tooltip: {
+                            callbacks: {
+                                label: (ctx) => {
+                                    const total = ctx.dataset.data.reduce((a, b) => a + b, 0);
+                                    const pct = total ? (ctx.parsed / total * 100).toFixed(1) : 0;
+                                    return `${ctx.label}: ${formatWealth(ctx.parsed)} (${pct}%)`;
+                                },
+                            },
+                        },
+                    },
+                },
+            });
+            _insightsCharts.set(canvasId, chart);
         },
     };
 }

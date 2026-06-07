@@ -848,6 +848,41 @@ h3 { font-size: 15px; margin-bottom: 12px; }
     height: 100%;
     display: block;
 }
+
+/* Sector / country breakdown — donut on the left, legend list right.
+   Wraps on narrow panels so a 540px deep-dive still reads cleanly. */
+.deep-dive-donut-row {
+    margin-top: 18px;
+}
+.deep-dive-donut-wrap {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    flex-wrap: wrap;
+}
+.deep-dive-donut-wrap canvas {
+    width: 180px !important;
+    height: 180px !important;
+    flex: 0 0 180px;
+}
+.deep-dive-donut-legend {
+    list-style: none; padding: 0; margin: 0;
+    flex: 1; min-width: 200px;
+    font-size: 12px;
+}
+.deep-dive-donut-legend li {
+    display: flex; align-items: center; gap: 8px;
+    padding: 3px 0;
+}
+.deep-dive-donut-legend li > span:nth-child(2) {
+    flex: 1; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.deep-dive-donut-swatch {
+    display: inline-block; width: 10px; height: 10px;
+    border-radius: 2px;
+    flex-shrink: 0;
+}
 .btn-sm {
     border: 1px solid #d8d6de;
     background: white;
