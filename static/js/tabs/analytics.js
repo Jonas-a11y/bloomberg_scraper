@@ -18,8 +18,16 @@ function analyticsMixin() {
                 fetch('/api/analytics/by-country').then(r => r.json()),
                 fetch('/api/analytics/demographics').then(r => r.json()),
             ]);
-            renderBarChart(this.chartInstances, 'industryChart', indRes.slice(0, 8), 'industry', 'total_wealth');
-            renderBarChart(this.chartInstances, 'countryChart', cntRes.slice(0, 8), 'country', 'total_wealth');
+            // Bars are clickable — open the deep-dive panel for the
+            // tapped industry / country. The handler lives on the
+            // insights mixin (these analytics charts now live inside
+            // the Insights tab).
+            renderBarChart(this.chartInstances, 'industryChart', indRes.slice(0, 8),
+                'industry', 'total_wealth',
+                (label) => this.openDeepDive && this.openDeepDive('industry', label));
+            renderBarChart(this.chartInstances, 'countryChart', cntRes.slice(0, 8),
+                'country', 'total_wealth',
+                (label) => this.openDeepDive && this.openDeepDive('country', label));
             renderDoughnut(this.chartInstances, 'genderChart', demoRes.gender);
             renderAgeChart(this.chartInstances, 'ageChart', demoRes.age_distribution);
             if (!this.concentrationData) {

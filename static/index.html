@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Bloomberg Scraper</title>
-    <link rel="stylesheet" href="/style.css?v=46">
+    <link rel="stylesheet" href="/style.css?v=47">
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
     <script src="https://cdn.jsdelivr.net/npm/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
@@ -678,12 +678,13 @@
                 </div>
                 <div class="race-canvas-wrap"><canvas id="insightsRaceChart"></canvas></div>
                 <div class="race-legend">
-                    <span class="muted small">Color = industry:</span>
+                    <span class="muted small">Color = industry (click to open market view):</span>
                     <template x-for="ind in raceIndustriesInFrame()" :key="ind.name">
-                        <span class="race-legend-chip">
+                        <button class="race-legend-chip race-legend-chip-btn"
+                                @click="openDeepDive('industry', ind.name)">
                             <span class="race-legend-swatch" :style="`background:${ind.color}`"></span>
                             <span x-text="ind.name"></span>
-                        </span>
+                        </button>
                     </template>
                 </div>
             </div>
@@ -901,12 +902,14 @@
             <div class="insights-card">
                 <div class="insights-card-header">
                     <h3>Wealth by industry<span class="help-icon" title="Total billionaire wealth aggregated by primary industry. Lets you see where today's fortunes come from at a glance.">?</span></h3>
+                    <span class="muted small">Click a bar → market deep-dive</span>
                 </div>
                 <div class="chart-wrap"><canvas id="industryChart"></canvas></div>
             </div>
             <div class="insights-card">
                 <div class="insights-card-header">
                     <h3>Wealth by country<span class="help-icon" title="Total billionaire wealth aggregated by citizenship. The US dominates by absolute count and by total wealth; China is rising fast.">?</span></h3>
+                    <span class="muted small">Click a bar → market deep-dive</span>
                 </div>
                 <div class="chart-wrap"><canvas id="countryChart"></canvas></div>
             </div>
@@ -2164,10 +2167,10 @@
     </aside>
 
     <script src="/js/format.js?v=4"></script>
-    <script src="/js/charts.js?v=10"></script>
+    <script src="/js/charts.js?v=11"></script>
     <script src="/js/tabs/dashboard.js?v=6"></script>
     <script src="/js/tabs/table.js?v=5"></script>
-    <script src="/js/tabs/analytics.js?v=4"></script>
+    <script src="/js/tabs/analytics.js?v=5"></script>
     <script src="/js/tabs/families.js?v=6"></script>
     <script src="/js/tabs/scraper.js?v=2"></script>
     <script src="/js/tabs/export.js?v=1"></script>

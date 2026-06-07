@@ -3,7 +3,7 @@
 
 const CHART_COLORS = ['#4ecdc4', '#ff6b6b', '#6c5ce7', '#fdcb6e', '#a29bfe', '#00b894', '#e17055', '#0984e3', '#d63031', '#6ab04c'];
 
-function renderBarChart(instances, canvasId, data, labelKey, valueKey) {
+function renderBarChart(instances, canvasId, data, labelKey, valueKey, onLabelClick) {
     const ctx = document.getElementById(canvasId);
     if (instances[canvasId]) instances[canvasId].destroy();
     const isWealth = valueKey === 'total_wealth' || valueKey === 'net_worth_usd';
@@ -23,6 +23,16 @@ function renderBarChart(instances, canvasId, data, labelKey, valueKey) {
                 tooltip: isWealth ? { callbacks: { label: c => formatWealth(c.parsed.x) } } : {},
             },
             scales: isWealth ? { x: { ticks: { callback: v => formatWealth(v) } } } : {},
+            // Optional click handler — analytics country/industry bars
+            // pass one to open the deep-dive panel.
+            onClick: onLabelClick ? (evt, els) => {
+                if (!els.length) return;
+                const label = data[els[0].index]?.[labelKey];
+                if (label) onLabelClick(label);
+            } : undefined,
+            onHover: onLabelClick ? (evt, els) => {
+                evt.native.target.style.cursor = els.length ? 'pointer' : 'default';
+            } : undefined,
         },
     });
 }

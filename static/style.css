@@ -848,6 +848,15 @@ h3 { font-size: 15px; margin-bottom: 12px; }
     display: inline-block; width: 10px; height: 10px;
     border-radius: 50%;
 }
+.race-legend-chip-btn {
+    border: 1px solid transparent;
+    cursor: pointer;
+    font-size: inherit; font-family: inherit;
+    transition: background 0.15s ease, border-color 0.15s ease;
+}
+.race-legend-chip-btn:hover {
+    background: white; border-color: #6c5ce7; color: #1a1a2e;
+}
 
 @media (max-width: 768px) {
     .insights-grid { grid-template-columns: 1fr; }
