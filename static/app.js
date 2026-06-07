@@ -2,7 +2,9 @@
 // Thin Alpine root that composes per-tab mixins. Each mixin lives in
 // static/js/tabs/* and returns a partial state + methods object. They are
 // merged into one Alpine reactive instance so cross-tab `this` access works.
-const VALID_TABS = ['dashboard', 'table', 'analytics', 'families', 'scraper', 'export', 'profile', 'insights'];
+// Analytics is now a section inside Insights; old `tab=analytics` URLs
+// transparently redirect.
+const VALID_TABS = ['dashboard', 'table', 'families', 'scraper', 'export', 'profile', 'insights'];
 
 function app() {
     return {
@@ -40,11 +42,13 @@ function app() {
 
         applyHash() {
             const params = new URLSearchParams(location.hash.slice(1));
-            const t = params.get('tab');
+            let t = params.get('tab');
+            // Backwards compat: old shared links to ?tab=analytics now
+            // route to Insights, where those charts live.
+            if (t === 'analytics') t = 'insights';
             if (t && VALID_TABS.includes(t) && t !== this.tab) {
                 this.tab = t;
                 if (t === 'table') this.loadTable();
-                else if (t === 'analytics') this.loadAnalytics();
                 else if (t === 'families') this.loadFamilies();
                 else if (t === 'scraper') this.loadScraper();
                 else if (t === 'insights') this.loadInsights();

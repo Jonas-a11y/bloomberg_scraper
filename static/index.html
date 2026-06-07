@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Bloomberg Scraper</title>
-    <link rel="stylesheet" href="/style.css?v=44">
+    <link rel="stylesheet" href="/style.css?v=45">
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
     <script src="https://cdn.jsdelivr.net/npm/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
@@ -15,7 +15,6 @@
         <div class="nav-tabs">
             <button :class="{ active: tab === 'dashboard' }" @click="tab = 'dashboard'">Dashboard</button>
             <button :class="{ active: tab === 'table' }" @click="tab = 'table'; loadTable()">Table</button>
-            <button :class="{ active: tab === 'analytics' }" @click="tab = 'analytics'; loadAnalytics()">Analytics</button>
             <button :class="{ active: tab === 'insights' }" @click="tab = 'insights'; loadInsights()">Insights</button>
             <button :class="{ active: tab === 'families' }" @click="tab = 'families'; loadFamilies()">Network</button>
             <button :class="{ active: tab === 'scraper' }" @click="tab = 'scraper'; loadScraper()">Scraper</button>
@@ -635,81 +634,7 @@
         </div>
     </main>
 
-    <!-- Analytics Tab -->
-    <main x-show="tab === 'analytics'">
-        <div class="chart-controls">
-            <div class="presets">
-                <span>Quick:</span>
-                <button @click="setPreset('top5')">Top 5</button>
-                <button @click="setPreset('top10')">Top 10</button>
-                <button @click="setPreset('tech')">Tech</button>
-                <button @click="setPreset('women')">Women</button>
-            </div>
-            <div class="person-search">
-                <div class="tags">
-                    <template x-for="(p, idx) in selectedPeople" :key="p.person_id">
-                        <span class="tag" :style="`background:${chartColors[idx % chartColors.length]}`">
-                            <span x-text="p.common_name"></span>
-                            <span class="tag-remove" @click="removePerson(idx)">x</span>
-                        </span>
-                    </template>
-                    <input type="text" placeholder="Add person..." x-model="personQuery" @input.debounce.300ms="searchPeople()">
-                </div>
-                <div class="autocomplete" x-show="searchResults.length > 0">
-                    <template x-for="r in searchResults" :key="r.person_id">
-                        <div class="autocomplete-item" @click="addPerson(r)">
-                            <span x-text="r.common_name"></span>
-                            <span class="muted" x-text="formatWealth(r.net_worth_usd) + ' · #' + r.rank"></span>
-                        </div>
-                    </template>
-                </div>
-            </div>
-        </div>
-        <div class="chart-area">
-            <div class="range-tabs">
-                <template x-for="r in ['YTD','6M','1Y','3Y','All']" :key="r">
-                    <button :class="{ active: wealthRange === (r === 'All' ? 'ALL' : r) }"
-                            @click="setWealthRange(r === 'All' ? 'ALL' : r)" x-text="r"></button>
-                </template>
-            </div>
-            <div class="chart-wrap chart-wrap-tall"><canvas id="wealthChart"></canvas></div>
-        </div>
-
-        <div class="chart-area">
-            <h3>Wealth Concentration Over Time</h3>
-            <p class="muted" style="margin-bottom: 8px;">
-                Share of total wealth held by the top 1, top 10, and top 100 within
-                Bloomberg's current 500. Pre-2015 values reflect a small surviving cohort —
-                interpret with that bias in mind.
-            </p>
-            <div class="range-tabs">
-                <template x-for="r in ['1Y','3Y','5Y','10Y','All']" :key="r">
-                    <button :class="{ active: concentrationRange === r }"
-                            @click="setConcentrationRange(r)" x-text="r"></button>
-                </template>
-            </div>
-            <div class="chart-wrap chart-wrap-tall"><canvas id="concentrationChart"></canvas></div>
-        </div>
-
-        <div class="aggregate-grid">
-            <div class="aggregate-card">
-                <h3>Wealth by Industry</h3>
-                <div class="chart-wrap"><canvas id="industryChart"></canvas></div>
-            </div>
-            <div class="aggregate-card">
-                <h3>Wealth by Country</h3>
-                <div class="chart-wrap"><canvas id="countryChart"></canvas></div>
-            </div>
-            <div class="aggregate-card">
-                <h3>Gender Distribution</h3>
-                <div class="chart-wrap"><canvas id="genderChart"></canvas></div>
-            </div>
-            <div class="aggregate-card">
-                <h3>Age Distribution</h3>
-                <div class="chart-wrap"><canvas id="ageChart"></canvas></div>
-            </div>
-        </div>
-    </main>
+    <!-- Analytics tab removed — its charts now live inside the Insights tab. -->
 
     <!-- Insights Tab -->
     <main x-show="tab === 'insights'">
@@ -913,7 +838,213 @@
                     </div>
                 </div>
             </div>
+
+            <!-- ─── Moved from Analytics ─── -->
+
+            <!-- Compare specific people's wealth over time -->
+            <div class="insights-card insights-card-wide">
+                <div class="insights-card-header">
+                    <h3>Compare wealth over time<span class="help-icon" title="Pick any set of billionaires and chart their daily net-worth alongside one another. Use the quick presets to seed the chart, or type a name to add anyone in the database. Drag the time range to focus a window.">?</span></h3>
+                </div>
+                <div class="chart-controls">
+                    <div class="presets">
+                        <span>Quick:</span>
+                        <button @click="setPreset('top5')">Top 5</button>
+                        <button @click="setPreset('top10')">Top 10</button>
+                        <button @click="setPreset('tech')">Tech</button>
+                        <button @click="setPreset('women')">Women</button>
+                    </div>
+                    <div class="person-search">
+                        <div class="tags">
+                            <template x-for="(p, idx) in selectedPeople" :key="p.person_id">
+                                <span class="tag" :style="`background:${chartColors[idx % chartColors.length]}`">
+                                    <span x-text="p.common_name"></span>
+                                    <span class="tag-remove" @click="removePerson(idx)">x</span>
+                                </span>
+                            </template>
+                            <input type="text" placeholder="Add person..." x-model="personQuery" @input.debounce.300ms="searchPeople()">
+                        </div>
+                        <div class="autocomplete" x-show="searchResults.length > 0">
+                            <template x-for="r in searchResults" :key="r.person_id">
+                                <div class="autocomplete-item" @click="addPerson(r)">
+                                    <span x-text="r.common_name"></span>
+                                    <span class="muted" x-text="formatWealth(r.net_worth_usd) + ' · #' + r.rank"></span>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+                </div>
+                <div class="range-tabs">
+                    <template x-for="r in ['YTD','6M','1Y','3Y','All']" :key="r">
+                        <button :class="{ active: wealthRange === (r === 'All' ? 'ALL' : r) }"
+                                @click="setWealthRange(r === 'All' ? 'ALL' : r)" x-text="r"></button>
+                    </template>
+                </div>
+                <div class="chart-wrap chart-wrap-tall"><canvas id="wealthChart"></canvas></div>
+            </div>
+
+            <!-- Concentration over time -->
+            <div class="insights-card insights-card-wide">
+                <div class="insights-card-header">
+                    <h3>Wealth concentration over time<span class="help-icon" title="Share of total wealth held by the top 1, top 10, and top 100 within Bloomberg's current 500. Pre-2015 values reflect a small surviving cohort — interpret with that bias in mind.">?</span></h3>
+                </div>
+                <div class="range-tabs">
+                    <template x-for="r in ['1Y','3Y','5Y','10Y','All']" :key="r">
+                        <button :class="{ active: concentrationRange === r }"
+                                @click="setConcentrationRange(r)" x-text="r"></button>
+                    </template>
+                </div>
+                <div class="chart-wrap chart-wrap-tall"><canvas id="concentrationChart"></canvas></div>
+            </div>
+
+            <!-- Wealth by industry / country / gender / age -->
+            <div class="insights-card">
+                <div class="insights-card-header">
+                    <h3>Wealth by industry<span class="help-icon" title="Total billionaire wealth aggregated by primary industry. Lets you see where today's fortunes come from at a glance.">?</span></h3>
+                </div>
+                <div class="chart-wrap"><canvas id="industryChart"></canvas></div>
+            </div>
+            <div class="insights-card">
+                <div class="insights-card-header">
+                    <h3>Wealth by country<span class="help-icon" title="Total billionaire wealth aggregated by citizenship. The US dominates by absolute count and by total wealth; China is rising fast.">?</span></h3>
+                </div>
+                <div class="chart-wrap"><canvas id="countryChart"></canvas></div>
+            </div>
+            <div class="insights-card">
+                <div class="insights-card-header">
+                    <h3>Gender distribution<span class="help-icon" title="Gender split among current billionaires. Pulled from Wikidata where available, otherwise inferred from biography pronouns with a confidence score.">?</span></h3>
+                </div>
+                <div class="chart-wrap"><canvas id="genderChart"></canvas></div>
+            </div>
+            <div class="insights-card">
+                <div class="insights-card-header">
+                    <h3>Age distribution<span class="help-icon" title="Histogram of current billionaire ages. The peak in the 60-75 range reflects how long it typically takes to build a multi-billion-dollar fortune; the long left tail is the tech-IPO cohort.">?</span></h3>
+                </div>
+                <div class="chart-wrap"><canvas id="ageChart"></canvas></div>
+            </div>
         </div>
+
+        <!-- Country / Industry deep-dive side panel -->
+        <div class="deep-dive-overlay" x-show="deepDiveOpen" @click="closeDeepDive()"></div>
+        <aside class="deep-dive-panel" :class="{ open: deepDiveOpen }">
+            <div class="deep-dive-header">
+                <div>
+                    <span class="muted small" x-text="deepDiveKind === 'country' ? 'Country' : 'Industry'"></span>
+                    <h2 x-text="deepDiveValue"></h2>
+                </div>
+                <button class="panel-close" @click="closeDeepDive()">×</button>
+            </div>
+            <div class="deep-dive-tabs">
+                <button :class="{ active: deepDiveTab === 'billionaires' }"
+                        @click="deepDiveTab = 'billionaires'">
+                    Billionaires
+                </button>
+                <button :class="{ active: deepDiveTab === 'market' }"
+                        @click="deepDiveTab = 'market'; if (!deepDiveMarket) fetchDeepDiveMarket()">
+                    Public market
+                </button>
+            </div>
+
+            <!-- Billionaires tab -->
+            <div class="deep-dive-content" x-show="deepDiveTab === 'billionaires'">
+                <div x-show="deepDiveLoading" class="muted small">Loading…</div>
+                <template x-if="deepDiveBillionaires">
+                    <div>
+                        <div class="deep-dive-stats">
+                            <div class="deep-dive-stat">
+                                <span class="deep-dive-stat-num" x-text="deepDiveBillionaires.persons.length"></span>
+                                <span class="deep-dive-stat-label">billionaires</span>
+                            </div>
+                            <div class="deep-dive-stat">
+                                <span class="deep-dive-stat-num" x-text="formatWealth(deepDiveBillionaires.total_wealth_usd)"></span>
+                                <span class="deep-dive-stat-label">total wealth</span>
+                            </div>
+                        </div>
+                        <ul class="deep-dive-list">
+                            <template x-for="(p, idx) in deepDiveBillionaires.persons" :key="p.person_id || idx">
+                                <li>
+                                    <span class="deep-dive-rank" x-text="'#' + (idx + 1)"></span>
+                                    <span :class="p.person_id ? 'metric-link' : ''"
+                                          @click="p.person_id && openProfile(p.person_id)"
+                                          x-text="p.name"></span>
+                                    <span class="muted small" x-text="formatWealth(p.net_worth_usd)"></span>
+                                </li>
+                            </template>
+                        </ul>
+                    </div>
+                </template>
+            </div>
+
+            <!-- Public market tab -->
+            <div class="deep-dive-content" x-show="deepDiveTab === 'market'">
+                <div x-show="!deepDiveMarket || deepDiveMarket.loading" class="muted small">
+                    Loading market data… (Yahoo Screener can take 5–10 seconds on first load)
+                </div>
+                <template x-if="deepDiveMarket && !deepDiveMarket.loading">
+                    <div>
+                        <p x-show="deepDiveMarket.note" class="muted small" x-text="deepDiveMarket.note"></p>
+                        <div class="deep-dive-stats" x-show="deepDiveMarket.total_market_cap_usd">
+                            <div class="deep-dive-stat">
+                                <span class="deep-dive-stat-num" x-text="formatWealth(deepDiveMarket.total_market_cap_usd)"></span>
+                                <span class="deep-dive-stat-label">total market cap (top names)</span>
+                            </div>
+                            <div class="deep-dive-stat">
+                                <span class="deep-dive-stat-num" x-text="(deepDiveMarket.companies?.length || 0) + (deepDiveMarket.companies?.length === 25 ? '+' : '')"></span>
+                                <span class="deep-dive-stat-label">companies</span>
+                            </div>
+                        </div>
+                        <h4 class="deep-dive-section-h">Top public companies</h4>
+                        <ul class="deep-dive-list">
+                            <template x-for="(c, idx) in (deepDiveMarket.companies || [])" :key="c.ticker || c.wikidata_qid || idx">
+                                <li>
+                                    <span class="deep-dive-rank" x-text="'#' + (idx + 1)"></span>
+                                    <span class="deep-dive-company">
+                                        <a x-show="c.ticker"
+                                           :href="'https://finance.yahoo.com/quote/' + c.ticker"
+                                           target="_blank" rel="noopener" class="metric-link"
+                                           x-text="c.name + ' (' + c.ticker + ')'"></a>
+                                        <span x-show="!c.ticker" x-text="c.name"></span>
+                                        <span class="muted small" x-show="c.sector" x-text="' · ' + c.sector"></span>
+                                    </span>
+                                    <span class="muted small" x-show="c.market_cap_usd" x-text="formatWealth(c.market_cap_usd)"></span>
+                                    <span class="muted small wd-tag" x-show="c.source === 'wikidata'" title="Source: Wikidata (no live market cap)">via Wikidata</span>
+                                </li>
+                            </template>
+                        </ul>
+                        <template x-if="deepDiveKind === 'country' && deepDiveMarket.sectors?.length">
+                            <div>
+                                <h4 class="deep-dive-section-h">Sector breakdown</h4>
+                                <ul class="deep-dive-breakdown">
+                                    <template x-for="s in deepDiveMarket.sectors" :key="s.name">
+                                        <li>
+                                            <span x-text="s.name"></span>
+                                            <span class="muted small" x-text="(s.share*100).toFixed(0) + '% · ' + formatWealth(s.market_cap_usd)"></span>
+                                        </li>
+                                    </template>
+                                </ul>
+                            </div>
+                        </template>
+                        <template x-if="deepDiveKind === 'industry' && deepDiveMarket.countries?.length">
+                            <div>
+                                <h4 class="deep-dive-section-h">Top markets</h4>
+                                <ul class="deep-dive-breakdown">
+                                    <template x-for="c in deepDiveMarket.countries" :key="c.name">
+                                        <li>
+                                            <span x-text="c.name"></span>
+                                            <span class="muted small" x-text="(c.share*100).toFixed(0) + '% · ' + formatWealth(c.market_cap_usd)"></span>
+                                        </li>
+                                    </template>
+                                </ul>
+                            </div>
+                        </template>
+                        <p class="muted small" style="margin-top: 12px;" x-show="deepDiveMarket.fetched_at">
+                            Sources: <span x-text="(deepDiveMarket.sources || []).join(', ') || 'none'"></span>.
+                            Cached up to 6h.
+                        </p>
+                    </div>
+                </template>
+            </div>
+        </aside>
     </main>
 
     <!-- Families Tab -->
@@ -1941,7 +2072,7 @@
     <script src="/js/tabs/export.js?v=1"></script>
     <script src="/js/tabs/panel.js?v=5"></script>
     <script src="/js/tabs/profile.js?v=25"></script>
-    <script src="/js/tabs/insights.js?v=7"></script>
-    <script src="/app.js?v=35"></script>
+    <script src="/js/tabs/insights.js?v=9"></script>
+    <script src="/app.js?v=36"></script>
 </body>
 </html>

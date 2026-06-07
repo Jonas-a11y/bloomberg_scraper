@@ -452,11 +452,23 @@ function insightsMixin() {
         insightsCorrelationN: 30,
         insightsCorrelationDays: 365,
 
+        // ─── Country / Industry deep-dive side panel ─────────────────────
+        deepDiveOpen: false,
+        deepDiveKind: '',          // 'country' | 'industry'
+        deepDiveValue: '',
+        deepDiveTab: 'billionaires', // 'billionaires' | 'market'
+        deepDiveLoading: false,
+        deepDiveBillionaires: null,
+        deepDiveMarket: null,
+
         // ─── Loaders ─────────────────────────────────────────────────────
         async loadInsights() {
             // Fire all the chart endpoints in parallel; render as each
             // returns. The shared filter state is read here; child
-            // helpers don't need to take params.
+            // helpers don't need to take params. The analytics-mixin's
+            // loadAnalytics() drives the charts that used to live on the
+            // Analytics tab — wealth comparison, concentration, by-
+            // industry/country/gender/age — and now share this tab.
             await Promise.all([
                 this.loadInsightsTopOverTime(),
                 this.loadInsightsCount(),
@@ -465,6 +477,7 @@ function insightsMixin() {
                 this.loadInsightsSourceGap(),
                 this.loadInsightsCorrelation(),
                 this.loadInsightsGeoMigration(),
+                this.loadAnalytics(),
             ]);
         },
 
@@ -548,12 +561,16 @@ function insightsMixin() {
             if (this.insightsFilters.country === country) country = '';
             this.insightsFilters.country = country;
             this.loadInsights();
+            // Also open the deep-dive panel for the country (skip when
+            // clearing the filter).
+            if (country) this.openDeepDive('country', country);
         },
 
         setInsightsIndustry(industry) {
             if (this.insightsFilters.industry === industry) industry = '';
             this.insightsFilters.industry = industry;
             this.loadInsights();
+            if (industry) this.openDeepDive('industry', industry);
         },
 
         clearInsightsFilters() {
@@ -817,6 +834,80 @@ function insightsMixin() {
 
         topResidenceCountries(n = 10) {
             return (this.insightsGeoMigration?.nodes || []).slice(0, n);
+        },
+
+        // ─── Deep-dive panel ─────────────────────────────────────────────
+
+        async openDeepDive(kind, value) {
+            this.deepDiveKind = kind;       // 'country' or 'industry'
+            this.deepDiveValue = value;
+            this.deepDiveTab = 'billionaires';
+            this.deepDiveOpen = true;
+            this.deepDiveBillionaires = null;
+            this.deepDiveMarket = null;
+            this.deepDiveLoading = true;
+            // Load billionaires synchronously (fast, our DB) and market in
+            // the background — Yahoo can take a few seconds for a cold
+            // cache, no point making the user wait.
+            try {
+                this.deepDiveBillionaires = await this.fetchDeepDiveBillionaires();
+            } finally {
+                this.deepDiveLoading = false;
+            }
+            this.fetchDeepDiveMarket();  // fire and forget
+        },
+
+        closeDeepDive() {
+            this.deepDiveOpen = false;
+        },
+
+        async fetchDeepDiveBillionaires() {
+            const f = this.insightsFilters;
+            const params = new URLSearchParams({
+                year_from: String(f.yearFrom), year_to: String(f.yearTo),
+                limit: '20',
+            });
+            if (this.deepDiveKind === 'country') {
+                params.set('country', this.deepDiveValue);
+            } else {
+                params.set('industry', this.deepDiveValue);
+            }
+            // Reuse top-over-time-series for the deep-dive's billionaire
+            // list — cheaper than a new endpoint and gives us full series.
+            // We only need the latest values, so just keep the last
+            // observation per person.
+            const data = await fetch(
+                `/api/insights/top-over-time-series?${params}`
+            ).then(r => r.json());
+            const persons = (data.persons || []).map(p => {
+                const last = p.series?.[p.series.length - 1];
+                return {
+                    person_id: p.person_id,
+                    name: p.name,
+                    citizenship: p.citizenship,
+                    industry: p.industry,
+                    image_url: p.image_url,
+                    net_worth_usd: last?.v || 0,
+                    last_obs: last?.ym,
+                };
+            }).filter(p => p.net_worth_usd > 0)
+              .sort((a, b) => b.net_worth_usd - a.net_worth_usd)
+              .slice(0, 20);
+            const total = persons.reduce((s, p) => s + (p.net_worth_usd || 0), 0);
+            return { persons, total_wealth_usd: total };
+        },
+
+        async fetchDeepDiveMarket() {
+            this.deepDiveMarket = { loading: true };
+            const path = this.deepDiveKind === 'country'
+                ? `/api/market/by-country?country=${encodeURIComponent(this.deepDiveValue)}&limit=15`
+                : `/api/market/by-industry?industry=${encodeURIComponent(this.deepDiveValue)}&limit=15`;
+            try {
+                const data = await fetch(path).then(r => r.json());
+                this.deepDiveMarket = data;
+            } catch (e) {
+                this.deepDiveMarket = { error: String(e) };
+            }
         },
     };
 }

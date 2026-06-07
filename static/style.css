@@ -725,6 +725,105 @@ h3 { font-size: 15px; margin-bottom: 12px; }
 .news-toggle.active .news-toggle-dot { background: #f39c12; }
 .news-toggle:hover { border-color: #f39c12; }
 
+/* ─── Deep-dive panel ─────────────────────────────────────────────── */
+
+.deep-dive-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.3);
+    z-index: 100;
+}
+.deep-dive-panel {
+    position: fixed; top: 0; right: 0; bottom: 0;
+    width: 540px; max-width: 95vw;
+    background: white; z-index: 101;
+    box-shadow: -4px 0 24px rgba(0,0,0,0.15);
+    transform: translateX(100%); transition: transform 0.25s ease;
+    overflow-y: auto;
+}
+.deep-dive-panel.open { transform: translateX(0); }
+
+.deep-dive-header {
+    display: flex; justify-content: space-between; align-items: flex-start;
+    padding: 20px 24px 12px; border-bottom: 1px solid #eee;
+}
+.deep-dive-header h2 { font-size: 22px; margin: 4px 0 0; }
+.deep-dive-header .panel-close {
+    background: none; border: none; font-size: 28px; line-height: 1;
+    cursor: pointer; color: #888; padding: 0 4px;
+}
+.deep-dive-header .panel-close:hover { color: #1a1a2e; }
+
+.deep-dive-tabs {
+    display: flex; gap: 4px; padding: 12px 24px;
+    border-bottom: 1px solid #eee;
+}
+.deep-dive-tabs button {
+    background: none; border: none; padding: 8px 16px;
+    border-radius: 6px; font-size: 13px; cursor: pointer;
+    color: #666; font-weight: 500;
+}
+.deep-dive-tabs button.active {
+    background: #1a1a2e; color: white;
+}
+.deep-dive-tabs button:hover:not(.active) {
+    background: #f0f1f5; color: #1a1a2e;
+}
+
+.deep-dive-content { padding: 16px 24px; }
+
+.deep-dive-stats {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
+    margin-bottom: 16px;
+}
+.deep-dive-stat {
+    background: #fafbff; border: 1px solid #e0e6ff;
+    border-radius: 6px; padding: 10px 12px; text-align: center;
+}
+.deep-dive-stat-num {
+    display: block; font-size: 18px; font-weight: 700;
+    color: #1a1a2e; font-variant-numeric: tabular-nums;
+}
+.deep-dive-stat-label {
+    display: block; font-size: 11px; color: #888;
+    text-transform: uppercase; letter-spacing: 0.04em; margin-top: 2px;
+}
+
+.deep-dive-section-h {
+    font-size: 11px; color: #6c5ce7;
+    text-transform: uppercase; letter-spacing: 0.05em;
+    margin: 16px 0 8px;
+}
+
+.deep-dive-list {
+    list-style: none; padding: 0; margin: 0 0 8px;
+}
+.deep-dive-list li {
+    display: flex; align-items: baseline; gap: 8px;
+    padding: 5px 0; font-size: 13px;
+    border-bottom: 1px solid #f0f0f0;
+}
+.deep-dive-list li:last-child { border-bottom: none; }
+.deep-dive-rank {
+    flex: 0 0 auto; min-width: 32px;
+    color: #888; font-variant-numeric: tabular-nums;
+    font-size: 11px;
+}
+.deep-dive-company {
+    flex: 1; min-width: 0; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap;
+}
+.wd-tag {
+    background: #f0eef5; color: #4a4458;
+    padding: 1px 6px; border-radius: 8px; font-size: 10px;
+}
+
+.deep-dive-breakdown {
+    list-style: none; padding: 0; margin: 0;
+}
+.deep-dive-breakdown li {
+    display: flex; justify-content: space-between;
+    padding: 3px 0; font-size: 12px;
+}
+
 .race-legend {
     display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
     margin-top: 10px; padding: 6px 0;
