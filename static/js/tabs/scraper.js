@@ -13,6 +13,15 @@ function scraperMixin() {
         syncMessage: '',
         schedule: { times: ['08:00'], timezone: 'UTC', enabled: true },
 
+        // Auth gate — populated from /api/scraper/auth on tab entry.
+        // The cookie set by /api/scraper/auth (POST) makes us stay
+        // authed across reloads for 30 days; until then we show a
+        // password modal. When the server doesn't have a password
+        // configured (SCRAPER_PASSWORD env var unset), `required` is
+        // false and the modal never shows.
+        scraperAuth: { required: false, authed: false, checked: false },
+        scraperAuthInput: { password: '', busy: false, error: '' },
+
         // ─── New: jobs added since the original Scraper panel ──────────
         // News refresh — pulls GDELT news for the last 30d
         newsRefresh: { running: false, done: 0, total: 0, errors: 0, saved: 0 },
@@ -31,6 +40,59 @@ function scraperMixin() {
             started_at: null, finished_at: null, step_results: [],
         },
         _jobPollers: {},      // canvas of setInterval ids per job
+
+        // ─── Auth gate ─────────────────────────────────────────────────
+        // Called from the nav button; check status, show modal if
+        // needed, otherwise load the panel as before. Splitting this
+        // out lets us refresh `scraperAuth` only when the user actively
+        // requests the tab — no extra request on every page load.
+        async enterScraperTab() {
+            this.tab = 'scraper';
+            // Always re-check on entry — a previous session might have
+            // expired or the server might have just enabled auth.
+            try {
+                this.scraperAuth = {
+                    ...await fetch('/api/scraper/auth').then(r => r.json()),
+                    checked: true,
+                };
+            } catch (e) {
+                // Network blip — keep going as if auth weren't required;
+                // the actual job triggers will 401 if it really is.
+                this.scraperAuth = { required: false, authed: true, checked: true };
+            }
+            if (this.scraperAuth.required && !this.scraperAuth.authed) {
+                // Modal is rendered by Alpine; loading the panel data
+                // can wait until they unlock.
+                this.scraperAuthInput = { password: '', busy: false, error: '' };
+                this.$nextTick(() => this.$refs.authPwInput?.focus());
+                return;
+            }
+            this.loadScraper();
+        },
+
+        async submitScraperAuth() {
+            this.scraperAuthInput.busy = true;
+            this.scraperAuthInput.error = '';
+            try {
+                const res = await fetch('/api/scraper/auth', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ password: this.scraperAuthInput.password }),
+                });
+                if (res.ok) {
+                    this.scraperAuth.authed = true;
+                    this.scraperAuthInput = { password: '', busy: false, error: '' };
+                    this.loadScraper();
+                } else {
+                    // Constant-time on the server, generic message here.
+                    this.scraperAuthInput.error = 'Wrong password.';
+                }
+            } catch (e) {
+                this.scraperAuthInput.error = 'Network error — try again.';
+            } finally {
+                this.scraperAuthInput.busy = false;
+            }
+        },
 
         async loadScraper() {
             const [statusRes, runsRes, schedRes, backfillRes,

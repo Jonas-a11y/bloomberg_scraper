@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Bloomberg Scraper</title>
-    <link rel="stylesheet" href="/style.css?v=51">
+    <link rel="stylesheet" href="/style.css?v=52">
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
     <script src="https://cdn.jsdelivr.net/npm/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
@@ -17,7 +17,7 @@
             <button :class="{ active: tab === 'table' }" @click="tab = 'table'; loadTable()">Table</button>
             <button :class="{ active: tab === 'insights' }" @click="tab = 'insights'; loadInsights()">Insights</button>
             <button :class="{ active: tab === 'families' }" @click="tab = 'families'; loadFamilies()">Network</button>
-            <button :class="{ active: tab === 'scraper' }" @click="tab = 'scraper'; loadScraper()">Scraper</button>
+            <button :class="{ active: tab === 'scraper' }" @click="enterScraperTab()">Scraper</button>
             <button :class="{ active: tab === 'export' }" @click="tab = 'export'; if (!tableData.data.length) loadTable()">Export</button>
         </div>
         <div class="nav-status">
@@ -1360,6 +1360,31 @@
 
     <!-- Scraper Tab -->
     <main x-show="tab === 'scraper'">
+        <!-- Auth gate modal — shown when the Scraper tab is opened on
+             a deployment that requires a password (SCRAPER_PASSWORD env
+             var set on the server). Cookie persists for 30 days. -->
+        <template x-if="scraperAuth.required && !scraperAuth.authed">
+            <div class="auth-overlay" @click.self="tab = 'dashboard'">
+                <form class="auth-modal" @submit.prevent="submitScraperAuth()">
+                    <h3>Scraper access</h3>
+                    <p class="muted small">
+                        The Scraper tab triggers heavy data-load jobs (Bloomberg, Wikidata, GDELT, Kaggle).
+                        Enter the password to continue. You'll stay logged in on this browser for 30 days.
+                    </p>
+                    <input type="password" x-model="scraperAuthInput.password"
+                           placeholder="Password"
+                           x-ref="authPwInput" autofocus required
+                           :disabled="scraperAuthInput.busy">
+                    <div class="auth-error" x-show="scraperAuthInput.error" x-text="scraperAuthInput.error"></div>
+                    <div class="auth-buttons">
+                        <button type="button" class="btn-sm"
+                                @click="tab = 'dashboard'">Cancel</button>
+                        <button type="submit" class="btn-primary" :disabled="scraperAuthInput.busy"
+                                x-text="scraperAuthInput.busy ? 'Checking…' : 'Unlock'"></button>
+                    </div>
+                </form>
+            </div>
+        </template>
         <!-- ─── Live scrape (the daily Bloomberg pull) ─────────────── -->
         <h3 class="scraper-section-h">Live scrape</h3>
         <div class="scraper-status-card">
@@ -2263,7 +2288,7 @@
     <script src="/js/tabs/table.js?v=5"></script>
     <script src="/js/tabs/analytics.js?v=5"></script>
     <script src="/js/tabs/families.js?v=6"></script>
-    <script src="/js/tabs/scraper.js?v=4"></script>
+    <script src="/js/tabs/scraper.js?v=5"></script>
     <script src="/js/tabs/export.js?v=1"></script>
     <script src="/js/tabs/panel.js?v=5"></script>
     <script src="/js/tabs/profile.js?v=25"></script>
