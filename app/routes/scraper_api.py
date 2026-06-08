@@ -241,3 +241,22 @@ def trigger_bootstrap(_: None = Depends(require_scraper_auth)):
 @router.get("/scraper/bootstrap")
 def bootstrap_status():
     return get_bootstrap_state()
+
+
+@router.get("/scraper/insights-cache")
+def insights_cache_stats():
+    """List every cached Insights payload — key, age, last compute
+    time, byte size. Lets the UI show a 'caches: 12/14 fresh' banner
+    or surface stale entries if a warm fails silently."""
+    from app.insights_cache import stats
+    return stats()
+
+
+@router.post("/scraper/insights-cache/warm")
+def insights_cache_warm(_: None = Depends(require_scraper_auth)):
+    """Manual cache warm — runs every entry in the warmup spec
+    regardless of TTL. Backgrounded so the request returns
+    immediately."""
+    from app.insights_cache import warm_in_background
+    warm_in_background(force=True)
+    return {"status": "started"}

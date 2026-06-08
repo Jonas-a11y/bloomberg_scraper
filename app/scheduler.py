@@ -101,6 +101,18 @@ def run_scrape(attempt=1):
             id=f"news_refresh_{run_id}",
             replace_existing=True,
         )
+        # Refresh the Insights cache. The scrape just changed the
+        # underlying data, so any cached payload is now stale —
+        # recompute everything in the warmup spec so the next visit
+        # to /Insights serves instantly. Runs after the news refresh
+        # so the newest day's articles are in too.
+        scheduler.add_job(
+            _warm_insights_cache_safe,
+            "date",
+            run_date=datetime.now() + timedelta(seconds=120),
+            id=f"insights_warm_{run_id}",
+            replace_existing=True,
+        )
     except Exception as e:
         duration_ms = int((time.time() - start) * 1000)
         next_attempt = attempt + 1
@@ -162,6 +174,22 @@ def start_scheduler():
     apply_schedule()
     if not scheduler.running:
         scheduler.start()
+    # Warm the Insights cache on startup so the first request after a
+    # restart doesn't trigger a cold compute. Runs in a background
+    # thread; failures don't break server boot. We already serve
+    # stale cache entries so the user is unaffected during the warm.
+    _warm_insights_cache_safe()
+
+
+def _warm_insights_cache_safe():
+    """Spawn the Insights cache warmer on a daemon thread, swallowing
+    any exception so a misconfigured DB / dataset can't take the
+    server down."""
+    try:
+        from app.insights_cache import warm_in_background
+        warm_in_background()
+    except Exception:
+        logger.exception("Insights cache warm failed")
 
 
 def stop_scheduler():

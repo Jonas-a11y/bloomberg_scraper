@@ -17,6 +17,31 @@ from datetime import datetime
 from fastapi import APIRouter
 
 from app.database import get_db
+from app import insights_cache
+
+
+def _cached(endpoint: str, params: dict, ttl_sec: int = 6 * 3600):
+    """Decorator: wrap an endpoint handler so it goes through
+    insights_cache. The decorated function still computes the answer;
+    the wrapper just decides whether to call it.
+
+    Usage:
+        @router.get("/insights/foo")
+        def foo(year: int = 2001):
+            return _cached("/insights/foo", {"year": year})(_compute_foo)(year)
+
+    For a less verbose pattern, callers below use this helper inline
+    inside each handler — see the cached_or_compute() one-liner.
+    """
+    def wrap(compute):
+        def go(*args, **kwargs):
+            payload, _state, _age = insights_cache.cached_or_compute(
+                endpoint, params, lambda: compute(*args, **kwargs),
+                ttl_sec=ttl_sec,
+            )
+            return payload
+        return go
+    return wrap
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -189,9 +214,24 @@ def top_over_time(
 
     Returns: { years: [...], frames: { year: [{ name, net_worth_usd, ... }] } }
     Each frame is sorted descending. UI animates between frames.
-    """
+
+    Cached via insights_cache: the underlying computation joins
+    snapshots × historical_rankings × wealth_history and is one of
+    the slower endpoints on the production dataset."""
     if year_to is None:
         year_to = datetime.now().year
+    return insights_cache.cached_or_compute(
+        "/insights/top-over-time",
+        {"n": n, "year_from": year_from, "year_to": year_to,
+         "country": country, "industry": industry},
+        lambda: _top_over_time_compute(n, year_from, year_to, country, industry),
+    )[0]
+
+
+def _top_over_time_compute(
+    n: int, year_from: int, year_to: int,
+    country: str | None, industry: str | None,
+):
     conn = get_db()
     rows = _historical_or_bloomberg_per_year(
         conn, year_from, year_to, country, industry,
@@ -309,6 +349,20 @@ def top_over_time_series(
     """
     if year_to is None:
         year_to = datetime.now().year
+    return insights_cache.cached_or_compute(
+        "/insights/top-over-time-series",
+        {"n": n, "year_from": year_from, "year_to": year_to,
+         "country": country, "industry": industry},
+        lambda: _top_over_time_series_compute(
+            n, year_from, year_to, country, industry,
+        ),
+    )[0]
+
+
+def _top_over_time_series_compute(
+    n: int, year_from: int, year_to: int,
+    country: str | None, industry: str | None,
+):
     conn = get_db()
 
     # Step 1: find every person who hit the top-N at any year-end. Reuse
@@ -542,6 +596,13 @@ def cohort_survival(year: int = 2001, top: int = 100):
       - died:         Wikidata has a death_date
       - never_tracked: was on Forbes `year` but Bloomberg never picked them up
     """
+    return insights_cache.cached_or_compute(
+        "/insights/cohort-survival", {"year": year, "top": top},
+        lambda: _cohort_survival_compute(year, top),
+    )[0]
+
+
+def _cohort_survival_compute(year: int, top: int):
     conn = get_db()
     cohort = conn.execute(
         """
@@ -625,6 +686,13 @@ def source_gap(year: int | None = None, limit: int = 30):
     closest to that year. Surfaces which billionaires the two sources
     most disagree about. Default year = most recent year for which we
     have BOTH Forbes annual + at least 100 Bloomberg observations."""
+    return insights_cache.cached_or_compute(
+        "/insights/source-gap", {"year": year, "limit": limit},
+        lambda: _source_gap_compute(year, limit),
+    )[0]
+
+
+def _source_gap_compute(year: int | None, limit: int):
     conn = get_db()
     if year is None:
         # Pick the most recent year that has Forbes Kaggle data; clamp
@@ -688,6 +756,16 @@ def inequality(year_from: int = 2001, year_to: int | None = None,
     """
     if year_to is None:
         year_to = datetime.now().year
+    return insights_cache.cached_or_compute(
+        "/insights/inequality",
+        {"year_from": year_from, "year_to": year_to,
+         "country": country, "industry": industry},
+        lambda: _inequality_compute(year_from, year_to, country, industry),
+    )[0]
+
+
+def _inequality_compute(year_from: int, year_to: int,
+                        country: str | None, industry: str | None):
     conn = get_db()
     rows = _historical_or_bloomberg_per_year(
         conn, year_from, year_to, country, industry,
@@ -744,6 +822,14 @@ def count_over_time(year_from: int = 2001, year_to: int | None = None,
     """
     if year_to is None:
         year_to = datetime.now().year
+    return insights_cache.cached_or_compute(
+        "/insights/count-over-time",
+        {"year_from": year_from, "year_to": year_to, "by": by},
+        lambda: _count_over_time_compute(year_from, year_to, by),
+    )[0]
+
+
+def _count_over_time_compute(year_from: int, year_to: int, by: str):
     conn = get_db()
     rows = _historical_or_bloomberg_per_year(
         conn, year_from, year_to,
@@ -826,8 +912,19 @@ def wealth_correlation(
 
     Scaling: at N=500 we do ~125k pair correlations. The naive
     Python-loop implementation took ~25s; numpy + a single matmul on
-    z-scored returns brings it under 1s.
+    z-scored returns brings it under 1s. Result is also cached — the
+    second visitor sees an instant load.
     """
+    return insights_cache.cached_or_compute(
+        "/insights/wealth-correlation",
+        {"n": n, "days": days, "threshold": threshold, "end_date": end_date},
+        lambda: _wealth_correlation_compute(n, days, threshold, end_date),
+    )[0]
+
+
+def _wealth_correlation_compute(
+    n: int, days: int, threshold: float, end_date: str | None,
+):
     import math
     from datetime import date, timedelta
 
@@ -1110,6 +1207,13 @@ def geo_migration():
     Persons whose birth and residence are the same are also returned
     (homebodies); the UI can choose to suppress them.
     """
+    return insights_cache.cached_or_compute(
+        "/insights/geo-migration", None,
+        _geo_migration_compute,
+    )[0]
+
+
+def _geo_migration_compute():
     import json as _json
     from app.database import get_network_db
 
