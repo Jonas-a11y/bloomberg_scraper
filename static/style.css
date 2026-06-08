@@ -144,6 +144,38 @@ tbody tr:hover { background: #f8f9ff; }
 .scraper-status-card .muted.small { display: block; margin-top: 4px; max-width: 720px; }
 .scraper-status-card a { color: #6c5ce7; }
 
+/* Job progress — generic bar used by news refresh, news backfill,
+   bootstrap. Uses --pct on the parent so the fill animates smoothly
+   between polls. */
+.job-progress { margin-top: 10px; }
+.progress-bar {
+    position: relative;
+    height: 18px;
+    background: #eef0f4;
+    border-radius: 9px;
+    overflow: hidden;
+}
+.progress-bar-fill {
+    position: absolute; inset: 0;
+    width: var(--pct, 0%);
+    background: linear-gradient(90deg, #6c5ce7 0%, #5ad1c7 100%);
+    transition: width 0.4s ease;
+}
+.progress-bar-fill.done {
+    background: #4ecdc4;
+}
+.progress-bar-label {
+    position: relative; z-index: 1;
+    display: block; line-height: 18px; text-align: center;
+    font-size: 11px; color: #1a1a2e; font-weight: 600;
+    text-shadow: 0 0 2px rgba(255,255,255,0.7);
+}
+.job-progress-detail {
+    margin-top: 6px;
+    font-size: 11px;
+    line-height: 1.5;
+}
+
 /* Bootstrap pipeline step list — one row per data-load job, with
    a coloured status dot so the user can see at a glance which
    step succeeded / failed / is currently running. */

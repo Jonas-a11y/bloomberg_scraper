@@ -15,7 +15,7 @@ scheduler = BackgroundScheduler()
 _is_running = False
 _backfill_state = {"running": False, "done": 0, "total": 0, "errors": 0, "started_at": None, "finished_at": None}
 _newcomer_wikidata_state = {"running": False, "done": 0, "total": 0, "started_at": None, "finished_at": None}
-_news_refresh_state = {"running": False, "done": 0, "total": 0, "errors": 0, "saved": 0, "started_at": None, "finished_at": None}
+_news_refresh_state = {"running": False, "done": 0, "total": 0, "errors": 0, "saved": 0, "current": None, "started_at": None, "finished_at": None}
 
 # Bloomberg occasionally rate-limits or 5xx's the scrape; rather than wait for
 # the next scheduled run (could be 24h away), automatically retry with growing
@@ -457,12 +457,14 @@ def run_news_refresh(force=False, person_ids=None):
 
     _news_refresh_state.update({
         "running": True, "done": 0, "total": len(rows), "errors": 0, "saved": 0,
+        "current": None,
         "started_at": datetime.now().isoformat(), "finished_at": None,
     })
     logger.info(f"News refresh: {len(rows)} persons to fetch")
     try:
         for person_id, full_name, common_name in rows:
             name = full_name or common_name
+            _news_refresh_state["current"] = name
             try:
                 articles = fetch_news_for_person(name) if name else []
                 if articles:
@@ -502,6 +504,7 @@ def run_news_refresh(force=False, person_ids=None):
             time.sleep(NEWS_REFRESH_DELAY_SEC)
     finally:
         _news_refresh_state["running"] = False
+        _news_refresh_state["current"] = None
         _news_refresh_state["finished_at"] = datetime.now().isoformat()
         logger.info(
             f"News refresh done: {_news_refresh_state['done']}/{_news_refresh_state['total']} "

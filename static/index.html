@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Bloomberg Scraper</title>
-    <link rel="stylesheet" href="/style.css?v=50">
+    <link rel="stylesheet" href="/style.css?v=51">
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
     <script src="https://cdn.jsdelivr.net/npm/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
@@ -1443,18 +1443,28 @@
 
         <!-- Wikipedia news backfill -->
         <div class="scraper-status-card">
-            <div>
+            <div style="flex: 1; min-width: 0;">
                 <strong>Wikipedia news backfill</strong>
                 <div class="muted small">
                     Mines each person's Wikipedia article for `&#123;&#123;cite news&#125;&#125;` references. Builds a multi-decade news timeline (2000s–today).
                 </div>
-                <div x-show="newsBackfill.running || newsBackfill.total" style="margin-top: 4px;">
-                    <span x-text="newsBackfill.done + ' / ' + newsBackfill.total + ' persons'"></span>
-                    <span class="muted small" x-show="newsBackfill.saved"
-                          x-text="' · ' + (newsBackfill.saved || 0).toLocaleString() + ' articles saved'"></span>
-                    <span class="muted small" x-show="newsBackfill.current"
-                          x-text="' · current: ' + newsBackfill.current"></span>
-                </div>
+                <template x-if="newsBackfill.running || newsBackfill.total">
+                    <div class="job-progress">
+                        <div class="progress-bar" :style="'--pct: ' + jobPercent(newsBackfill) + '%'">
+                            <div class="progress-bar-fill" :class="{ done: !newsBackfill.running }"></div>
+                            <span class="progress-bar-label" x-text="jobProgressLabel(newsBackfill)"></span>
+                        </div>
+                        <div class="muted small job-progress-detail">
+                            <span x-show="newsBackfill.current" x-text="'Current: ' + newsBackfill.current"></span>
+                            <span x-show="newsBackfill.saved !== undefined"
+                                  x-text="' · ' + (newsBackfill.saved || 0).toLocaleString() + ' articles saved'"></span>
+                            <span x-show="newsBackfill.errors"
+                                  x-text="' · ' + newsBackfill.errors + ' errors'"
+                                  style="color:#c0392b;"></span>
+                            <span x-show="newsBackfill.running" x-text="' · ETA ' + jobETA(newsBackfill)"></span>
+                        </div>
+                    </div>
+                </template>
             </div>
             <button class="btn-primary" @click="triggerNewsBackfill()" :disabled="newsBackfill.running">
                 <span x-text="newsBackfill.running ? 'Running…' : 'Backfill news'"></span>
@@ -1463,16 +1473,31 @@
 
         <!-- GDELT news refresh -->
         <div class="scraper-status-card">
-            <div>
+            <div style="flex: 1; min-width: 0;">
                 <strong>Recent news refresh</strong>
                 <div class="muted small">
                     Pulls the past 30 days of news for every person via GDELT. Auto-runs after each scrape; this button forces an extra pass now.
+                    <span x-show="newsRefresh.total" class="muted small">
+                        ~5–7s/person from a cold cache, so a full 500-person pass takes 40–60 minutes.
+                    </span>
                 </div>
-                <div x-show="newsRefresh.running || newsRefresh.total" style="margin-top: 4px;">
-                    <span x-text="newsRefresh.done + ' / ' + newsRefresh.total + ' persons'"></span>
-                    <span class="muted small" x-show="newsRefresh.saved"
-                          x-text="' · ' + (newsRefresh.saved || 0).toLocaleString() + ' articles saved'"></span>
-                </div>
+                <template x-if="newsRefresh.running || newsRefresh.total">
+                    <div class="job-progress">
+                        <div class="progress-bar" :style="'--pct: ' + jobPercent(newsRefresh) + '%'">
+                            <div class="progress-bar-fill" :class="{ done: !newsRefresh.running }"></div>
+                            <span class="progress-bar-label" x-text="jobProgressLabel(newsRefresh)"></span>
+                        </div>
+                        <div class="muted small job-progress-detail">
+                            <span x-show="newsRefresh.current" x-text="'Current: ' + newsRefresh.current"></span>
+                            <span x-show="newsRefresh.saved !== undefined"
+                                  x-text="' · ' + (newsRefresh.saved || 0).toLocaleString() + ' articles saved'"></span>
+                            <span x-show="newsRefresh.errors"
+                                  x-text="' · ' + newsRefresh.errors + ' errors'"
+                                  style="color:#c0392b;"></span>
+                            <span x-show="newsRefresh.running" x-text="' · ETA ' + jobETA(newsRefresh)"></span>
+                        </div>
+                    </div>
+                </template>
             </div>
             <button class="btn-primary" @click="triggerNewsRefresh()" :disabled="newsRefresh.running">
                 <span x-text="newsRefresh.running ? 'Running…' : 'Refresh news'"></span>
@@ -2238,7 +2263,7 @@
     <script src="/js/tabs/table.js?v=5"></script>
     <script src="/js/tabs/analytics.js?v=5"></script>
     <script src="/js/tabs/families.js?v=6"></script>
-    <script src="/js/tabs/scraper.js?v=3"></script>
+    <script src="/js/tabs/scraper.js?v=4"></script>
     <script src="/js/tabs/export.js?v=1"></script>
     <script src="/js/tabs/panel.js?v=5"></script>
     <script src="/js/tabs/profile.js?v=25"></script>

@@ -120,7 +120,7 @@ function scraperMixin() {
                     clearInterval(this._jobPollers.newsRefresh);
                     delete this._jobPollers.newsRefresh;
                 }
-            }, 3000);
+            }, 1500);
         },
 
         // ─── News backfill (Wikipedia citations) ────────────────────────
@@ -144,7 +144,7 @@ function scraperMixin() {
                     clearInterval(this._jobPollers.newsBackfill);
                     delete this._jobPollers.newsBackfill;
                 }
-            }, 5000);
+            }, 1500);
         },
 
         // ─── Forbes Wikipedia scrape (legacy) ──────────────────────────
@@ -246,6 +246,45 @@ function scraperMixin() {
             next.setHours(h, m, 0, 0);
             if (next <= now) next.setDate(next.getDate() + 1);
             return next.toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+        },
+
+        // ─── Generic job progress helpers ──────────────────────────────
+        // Used by the news refresh / news backfill / bootstrap cards.
+        // The state shape is consistent across jobs:
+        //   { running, done, total, started_at, errors?, saved?, current? }
+        jobPercent(s) {
+            if (!s || !s.total) return 0;
+            return Math.min(100, Math.round((s.done / s.total) * 100));
+        },
+
+        jobProgressLabel(s) {
+            if (!s || !s.total) return '0 / 0';
+            const pct = this.jobPercent(s);
+            return `${s.done.toLocaleString()} / ${s.total.toLocaleString()} (${pct}%)`;
+        },
+
+        // ETA from the elapsed time per item so far. Returns "—" until
+        // we have at least 2 items done (otherwise the rate is too noisy).
+        jobETA(s) {
+            if (!s || !s.running || !s.started_at || !s.total || s.done < 2) {
+                return '—';
+            }
+            const startedMs = new Date(s.started_at).getTime();
+            const elapsedMs = Date.now() - startedMs;
+            if (elapsedMs <= 0) return '—';
+            const perItem = elapsedMs / s.done;
+            const remainingMs = perItem * (s.total - s.done);
+            return this.fmtDuration(remainingMs);
+        },
+
+        fmtDuration(ms) {
+            if (!isFinite(ms) || ms < 0) return '—';
+            const s = Math.round(ms / 1000);
+            if (s < 60) return `${s}s`;
+            const m = Math.round(s / 60);
+            if (m < 60) return `${m}m`;
+            const h = Math.floor(m / 60), mm = m % 60;
+            return `${h}h ${mm}m`;
         },
     };
 }
