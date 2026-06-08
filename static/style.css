@@ -144,6 +144,26 @@ tbody tr:hover { background: #f8f9ff; }
 .scraper-status-card .muted.small { display: block; margin-top: 4px; max-width: 720px; }
 .scraper-status-card a { color: #6c5ce7; }
 
+/* Bootstrap pipeline step list — one row per data-load job, with
+   a coloured status dot so the user can see at a glance which
+   step succeeded / failed / is currently running. */
+.bootstrap-steps {
+    list-style: none; padding: 0; margin: 10px 0 0;
+    font-size: 12px;
+}
+.bootstrap-steps li {
+    padding: 3px 0; display: flex; align-items: center; gap: 8px;
+}
+.bootstrap-step-status {
+    width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+    background: #ddd;
+}
+.bootstrap-step-status.ok { background: #4ecdc4; }
+.bootstrap-step-status.error { background: #ff6b6b; }
+.bootstrap-step-status.running {
+    background: #fdcb6e; animation: pulse 1s infinite;
+}
+
 .form-row { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
 .form-row label { color: #666; width: 80px; font-size: 13px; }
 .form-row select, .form-row input[type="time"], .form-row input[type="date"] {

@@ -25,11 +25,17 @@ function scraperMixin() {
         forbesKaggleMessage: '',
         // Wikidata network refresh — rebuilds family/entity/holdings graph
         networkRefresh: { running: false, stage: '', done: 0, total: 0 },
+        // Bootstrap pipeline — sequentially runs every data-load job
+        bootstrap: {
+            running: false, step: null, step_index: 0, step_total: 0,
+            started_at: null, finished_at: null, step_results: [],
+        },
         _jobPollers: {},      // canvas of setInterval ids per job
 
         async loadScraper() {
             const [statusRes, runsRes, schedRes, backfillRes,
-                   newsRefreshRes, newsBackfillRes, networkRes] = await Promise.all([
+                   newsRefreshRes, newsBackfillRes, networkRes,
+                   bootstrapRes] = await Promise.all([
                 fetch('/api/scraper/status').then(r => r.json()),
                 fetch('/api/scraper/runs').then(r => r.json()),
                 fetch('/api/scraper/schedule').then(r => r.json()),
@@ -37,6 +43,7 @@ function scraperMixin() {
                 fetch('/api/scraper/refresh-news').then(r => r.json()).catch(() => ({})),
                 fetch('/api/scraper/backfill-news').then(r => r.json()).catch(() => ({})),
                 fetch('/api/families/refresh').then(r => r.json()).catch(() => ({})),
+                fetch('/api/scraper/bootstrap').then(r => r.json()).catch(() => ({})),
             ]);
             this.scraperStatus = statusRes;
             this.scraperRuns = runsRes;
@@ -45,12 +52,15 @@ function scraperMixin() {
             this.newsRefresh = newsRefreshRes || this.newsRefresh;
             this.newsBackfill = newsBackfillRes || this.newsBackfill;
             this.networkRefresh = networkRes || this.networkRefresh;
+            this.bootstrap = bootstrapRes && Object.keys(bootstrapRes).length
+                ? bootstrapRes : this.bootstrap;
 
             // Resume polling for any already-running job
             if (backfillRes.running) this._pollBackfill();
             if (newsRefreshRes?.running) this._pollNewsRefresh();
             if (newsBackfillRes?.running) this._pollNewsBackfill();
             if (networkRes?.running) this._pollNetworkRefresh();
+            if (bootstrapRes?.running) this._pollBootstrap();
         },
 
         async triggerScrape() {
@@ -200,6 +210,33 @@ function scraperMixin() {
             if (res.ok) {
                 this.schedule = await res.json();
             }
+        },
+
+        // ─── Bootstrap pipeline ─────────────────────────────────────────
+        // Sequentially runs every data-load step. The backend tracks
+        // per-step status; we poll every 2s while it's running.
+        async triggerBootstrap() {
+            await fetch('/api/scraper/bootstrap', { method: 'POST' });
+            this.bootstrap.running = true;
+            this._pollBootstrap();
+        },
+
+        _pollBootstrap() {
+            if (this._jobPollers.bootstrap) return;
+            this._jobPollers.bootstrap = setInterval(async () => {
+                try {
+                    this.bootstrap = await fetch('/api/scraper/bootstrap').then(r => r.json());
+                } catch (e) {
+                    // Server hiccup — keep polling.
+                }
+                if (!this.bootstrap.running) {
+                    clearInterval(this._jobPollers.bootstrap);
+                    delete this._jobPollers.bootstrap;
+                    // Refresh sibling cards so any data the bootstrap
+                    // produced shows up immediately.
+                    this.loadScraper();
+                }
+            }, 2000);
         },
 
         nextRunForTime(timeStr) {

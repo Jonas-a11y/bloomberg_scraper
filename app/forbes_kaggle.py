@@ -39,7 +39,11 @@ def download_dataset(target_dir=DEFAULT_DOWNLOAD_DIR, force=False):
     """Download + unzip the Kaggle dataset. Returns the directory path.
 
     No-op if the directory already has CSV files unless force=True.
-    Raises RuntimeError with a clear message if kaggle CLI isn't set up."""
+    Tries the Python `kaggle` API first (in-process, works without
+    the `kaggle` shell binary on $PATH — common on Docker / systemd
+    deployments). Falls back to the CLI for legacy installs.
+    Raises RuntimeError with a clear, actionable message on any
+    failure path."""
     target_dir = Path(target_dir)
     target_dir.mkdir(parents=True, exist_ok=True)
 
@@ -49,26 +53,64 @@ def download_dataset(target_dir=DEFAULT_DOWNLOAD_DIR, force=False):
             logger.info(f"Found {len(existing)} CSV(s) in {target_dir}, skipping download")
             return target_dir
 
-    # Public CC0 datasets often work without auth, so we don't require
-    # ~/.kaggle/kaggle.json upfront. We surface the auth instructions only
-    # if the CLI itself complains about missing credentials.
     logger.info(f"Downloading {KAGGLE_DATASET} to {target_dir}…")
-    result = subprocess.run(
-        ["kaggle", "datasets", "download", "-d", KAGGLE_DATASET,
-         "-p", str(target_dir), "--unzip"],
-        capture_output=True, text=True, check=False,
+
+    auth_hint = (
+        "Kaggle requires API credentials for this dataset.\n"
+        "  1) Sign in at https://www.kaggle.com\n"
+        "  2) Settings → Account → Create New Token (downloads kaggle.json)\n"
+        "  3) mkdir -p ~/.kaggle && mv ~/Downloads/kaggle.json ~/.kaggle/\n"
+        "  4) chmod 600 ~/.kaggle/kaggle.json\n"
+        "  Or set KAGGLE_USERNAME and KAGGLE_KEY as env vars."
     )
-    if result.returncode != 0:
-        if not list(target_dir.glob("*.csv")) and not list(target_dir.glob("*.zip")):
+
+    # Path 1: Python API. Avoids the subprocess entirely — same
+    # interpreter, same dependency tree. Works on a deployment that
+    # has the `kaggle` pip package but no shell wrapper on $PATH.
+    py_err = None
+    try:
+        from kaggle.api.kaggle_api_extended import KaggleApi
+        api = KaggleApi()
+        api.authenticate()
+        api.dataset_download_files(
+            KAGGLE_DATASET, path=str(target_dir), unzip=True, quiet=True,
+        )
+    except ImportError as e:
+        py_err = f"kaggle Python package not importable: {e}"
+    except Exception as e:
+        msg = str(e).lower()
+        if ("credentials" in msg or "401" in msg or "403" in msg
+                or "kaggle.json" in msg or "could not find" in msg):
+            raise RuntimeError(auth_hint) from e
+        py_err = f"kaggle Python API failed: {e}"
+
+    # Path 2: shell CLI (legacy / diagnostic). Only attempted if the
+    # Python path didn't already produce CSVs.
+    csvs = list(target_dir.glob("*.csv"))
+    if not csvs:
+        try:
+            result = subprocess.run(
+                ["kaggle", "datasets", "download", "-d", KAGGLE_DATASET,
+                 "-p", str(target_dir), "--unzip"],
+                capture_output=True, text=True, check=False,
+            )
+        except FileNotFoundError as e:
+            # Bare `kaggle` binary missing on $PATH — happens on most
+            # locked-down server-side deployments. Surface BOTH errors
+            # so the user knows the Python path is also broken.
+            raise RuntimeError(
+                f"Could not download from Kaggle.\n"
+                f"  Python API: {py_err or 'not attempted'}\n"
+                f"  Shell CLI:  {e}\n"
+                f"\nFix: install the kaggle Python package "
+                f"(`pip install kaggle`) AND ensure credentials "
+                f"are present.\n\n{auth_hint}"
+            ) from e
+        if result.returncode != 0:
             stderr = result.stderr.strip().lower()
-            if "could not find kaggle.json" in stderr or "credentials" in stderr or "401" in stderr or "403" in stderr:
-                raise RuntimeError(
-                    "Kaggle requires API credentials for this dataset.\n"
-                    "  1) Sign in at https://www.kaggle.com\n"
-                    "  2) Settings → Account → Create New Token (downloads kaggle.json)\n"
-                    "  3) mkdir -p ~/.kaggle && mv ~/Downloads/kaggle.json ~/.kaggle/\n"
-                    "  4) chmod 600 ~/.kaggle/kaggle.json"
-                )
+            if ("could not find kaggle.json" in stderr or "credentials" in stderr
+                    or "401" in stderr or "403" in stderr):
+                raise RuntimeError(auth_hint)
             raise RuntimeError(
                 f"kaggle download failed (exit {result.returncode}):\n"
                 f"  stderr: {result.stderr.strip()}\n"

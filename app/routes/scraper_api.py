@@ -18,6 +18,9 @@ from app.scheduler import (
     get_news_refresh_state,
     run_news_backfill,
     get_news_backfill_state,
+    run_bootstrap,
+    is_bootstrap_running,
+    get_bootstrap_state,
 )
 from app.models import ScheduleUpdate
 
@@ -157,3 +160,28 @@ def trigger_news_backfill(only_new: bool = True):
 @router.get("/scraper/backfill-news")
 def news_backfill_status():
     return get_news_backfill_state()
+
+
+@router.post("/scraper/bootstrap")
+def trigger_bootstrap():
+    """One-click 'load everything' for an empty deployment.
+
+    Runs the full data-load pipeline in sequence: Forbes Kaggle →
+    Forbes Wikipedia → Wikidata + family network → GDELT news refresh →
+    Wikipedia citations news backfill → snapshot history sync.
+
+    Bloomberg LIVE scrape is intentionally NOT included — that's the
+    cadenced job under user control via the schedule.
+
+    Each step is idempotent (skips already-done work), so re-running
+    is safe and simply gap-fills."""
+    if is_bootstrap_running():
+        return {"status": "already_running", **get_bootstrap_state()}
+    thread = threading.Thread(target=run_bootstrap, daemon=True)
+    thread.start()
+    return {"status": "started"}
+
+
+@router.get("/scraper/bootstrap")
+def bootstrap_status():
+    return get_bootstrap_state()

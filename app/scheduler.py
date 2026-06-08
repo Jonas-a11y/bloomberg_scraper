@@ -598,15 +598,34 @@ def run_news_backfill(person_ids=None, only_new=True):
         rows = [r for r in rows if r[0] not in backfilled]
     main.close()
 
+    # Diagnostics: how big is the eligible pool, and what cuts shrink
+    # it? Surface this in the state so the user can see WHY the
+    # backfill might cover only a fraction of total billionaires
+    # (most common cause: Wikidata enrichment has only resolved a
+    # subset, so most persons don't have a wikipedia_url stored).
+    rows_with_wiki = len(rows)
     if not rows:
+        _news_backfill_state.update({
+            "total": 0, "diagnostics": {
+                "persons_with_wikipedia_url": len(wiki_url_by_pid),
+                "eligible_after_only_new_filter": 0,
+            },
+        })
         return
 
     _news_backfill_state.update({
         "running": True, "done": 0, "total": len(rows), "errors": 0, "saved": 0,
         "started_at": datetime.now().isoformat(), "finished_at": None,
         "current": None,
+        "diagnostics": {
+            "persons_with_wikipedia_url": len(wiki_url_by_pid),
+            "eligible_after_only_new_filter": rows_with_wiki,
+        },
     })
-    logger.info(f"News backfill (Wikipedia): {len(rows)} persons")
+    logger.info(
+        f"News backfill (Wikipedia): {len(rows)} persons "
+        f"(of {len(wiki_url_by_pid)} with Wikipedia URL stored)"
+    )
     try:
         for person_id, full_name, common_name in rows:
             name = full_name or common_name
@@ -670,6 +689,169 @@ def run_news_backfill(person_ids=None, only_new=True):
 
 def get_news_backfill_state():
     return dict(_news_backfill_state)
+
+
+# =============================================================================
+# Bootstrap pipeline — "run everything once" for an empty deployment.
+# =============================================================================
+
+# Each step runs one of the existing background jobs in sequence.
+# The order is intentional: Forbes Kaggle first (gives us decades of
+# history from a CC0 dataset, fast), then the slower Wikipedia / network
+# / news jobs that depend on persons already being in the DB.
+# Bloomberg LIVE scrape is intentionally NOT in here — that's the
+# regular cadence job and the user controls it via the schedule.
+BOOTSTRAP_STEPS = [
+    {
+        "key": "forbes_kaggle",
+        "label": "Forbes Kaggle (history 2001–2024)",
+        "run": "_bootstrap_forbes_kaggle",
+        "state": "_backfill_state",
+    },
+    {
+        "key": "forbes_wiki",
+        "label": "Forbes Wikipedia (gap-fill)",
+        "run": "_bootstrap_forbes_wiki",
+        "state": "_backfill_state",
+    },
+    {
+        "key": "network",
+        "label": "Wikidata + family network refresh",
+        "run": "_bootstrap_network",
+        "state": "family_refresh",
+    },
+    {
+        "key": "news_refresh",
+        "label": "GDELT news refresh (latest)",
+        "run": "_bootstrap_news_refresh",
+        "state": "_news_refresh_state",
+    },
+    {
+        "key": "news_backfill",
+        "label": "Wikipedia citations news backfill",
+        "run": "_bootstrap_news_backfill",
+        "state": "_news_backfill_state",
+    },
+    {
+        "key": "sync_history",
+        "label": "Sync snapshot history",
+        "run": "_bootstrap_sync_history",
+        "state": None,
+    },
+]
+
+_bootstrap_state = {
+    "running": False,
+    "step": None,        # current step key ("forbes_kaggle", …)
+    "step_index": 0,     # 0-based
+    "step_total": len(BOOTSTRAP_STEPS),
+    "started_at": None,
+    "finished_at": None,
+    "step_results": [],  # list of {key, label, status, error?, started_at, finished_at}
+    "error": None,
+}
+
+
+def is_bootstrap_running():
+    return _bootstrap_state["running"]
+
+
+def get_bootstrap_state():
+    return dict(_bootstrap_state)
+
+
+def _bootstrap_forbes_kaggle():
+    """Run the Kaggle dataset import. Doesn't need to wait — the call
+    is synchronous in this thread, no separate background job."""
+    from app.forbes_kaggle import run as run_kaggle
+    return run_kaggle(force_download=False)
+
+
+def _bootstrap_forbes_wiki():
+    """Forbes Wikipedia history scrape — runs synchronously here."""
+    return run_history_backfill(only_new=True)
+
+
+def _bootstrap_network():
+    """Full Wikidata QID resolve + family network refresh. Blocks
+    until done. Already-resolved persons are skipped."""
+    from app.family.refresh import run_refresh
+    return run_refresh()
+
+
+def _bootstrap_news_refresh():
+    """Single GDELT pull — fast, populates today's coverage."""
+    return run_news_refresh(force=False)
+
+
+def _bootstrap_news_backfill():
+    """Wikipedia-citation news backfill. Skips persons already done."""
+    return run_news_backfill(only_new=True)
+
+
+def _bootstrap_sync_history():
+    """Promote any orphan snapshot rows into wealth_history."""
+    from app.database import sync_history_from_snapshots
+    return sync_history_from_snapshots()
+
+
+def run_bootstrap():
+    """Sequentially run every data-loading job needed to bring an
+    empty deployment up to a fully populated state. NOT idempotent in
+    a destructive way — each step skips work that's already done — so
+    re-running is safe and just fills any gaps.
+
+    Excludes the live Bloomberg scrape (the user controls that via
+    the schedule)."""
+    if _bootstrap_state["running"]:
+        logger.info("Bootstrap requested but already running")
+        return
+    _bootstrap_state.update({
+        "running": True,
+        "step": None,
+        "step_index": 0,
+        "step_total": len(BOOTSTRAP_STEPS),
+        "started_at": datetime.now().isoformat(),
+        "finished_at": None,
+        "step_results": [],
+        "error": None,
+    })
+    logger.info(f"Bootstrap start ({len(BOOTSTRAP_STEPS)} steps)")
+    try:
+        for i, step in enumerate(BOOTSTRAP_STEPS):
+            _bootstrap_state["step"] = step["key"]
+            _bootstrap_state["step_index"] = i
+            started = datetime.now().isoformat()
+            logger.info(f"Bootstrap step {i+1}/{len(BOOTSTRAP_STEPS)}: {step['label']}")
+            result = {
+                "key": step["key"],
+                "label": step["label"],
+                "started_at": started,
+                "finished_at": None,
+                "status": "running",
+            }
+            _bootstrap_state["step_results"].append(result)
+            try:
+                func = globals()[step["run"]]
+                func()
+                result["status"] = "ok"
+            except Exception as e:
+                # Don't abort the pipeline on one bad step — log it and
+                # move on. The user gets a per-step status table so
+                # they can re-run individual ones.
+                logger.exception(f"Bootstrap step '{step['key']}' failed")
+                result["status"] = "error"
+                result["error"] = str(e)
+            finally:
+                result["finished_at"] = datetime.now().isoformat()
+        ok = sum(1 for r in _bootstrap_state["step_results"] if r["status"] == "ok")
+        logger.info(
+            f"Bootstrap done: {ok}/{len(BOOTSTRAP_STEPS)} steps OK"
+        )
+    finally:
+        _bootstrap_state["running"] = False
+        _bootstrap_state["step"] = None
+        _bootstrap_state["finished_at"] = datetime.now().isoformat()
 
 
 def rescore_news_by_co_occurrence():

@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Bloomberg Scraper</title>
-    <link rel="stylesheet" href="/style.css?v=49">
+    <link rel="stylesheet" href="/style.css?v=50">
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
     <script src="https://cdn.jsdelivr.net/npm/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
@@ -1378,6 +1378,39 @@
             <button class="btn-primary" @click="triggerScrape()" :disabled="scraperStatus.status === 'running'">Run now</button>
         </div>
 
+        <!-- ─── First-time / catch-all bootstrap ───────────────────── -->
+        <h3 class="scraper-section-h">Bootstrap (first-time / catch-up)</h3>
+        <div class="scraper-status-card">
+            <div style="flex: 1; min-width: 0;">
+                <strong>Run everything once</strong>
+                <div class="muted small" style="margin-top: 4px;">
+                    Sequentially runs every data-load job needed to bring an empty deployment fully online: Forbes Kaggle → Forbes Wikipedia → Wikidata + family network → GDELT news → Wikipedia news backfill → history sync.
+                    Bloomberg live scrape is excluded (it's on the schedule). Each step is idempotent — safe to re-run, fills any gaps.
+                </div>
+                <div x-show="bootstrap.running" style="margin-top: 8px; font-size: 12px;">
+                    <span class="status-dot running"></span>
+                    <strong>Step <span x-text="(bootstrap.step_index || 0) + 1"></span> / <span x-text="bootstrap.step_total"></span>:</strong>
+                    <span x-text="(bootstrap.step_results || []).find(r => r.key === bootstrap.step)?.label || '…'"></span>
+                </div>
+                <ul x-show="(bootstrap.step_results || []).length" class="bootstrap-steps">
+                    <template x-for="r in bootstrap.step_results" :key="r.key">
+                        <li>
+                            <span class="bootstrap-step-status" :class="r.status"></span>
+                            <span x-text="r.label"></span>
+                            <span class="muted small" x-show="r.status === 'error'" x-text="' — ' + (r.error || 'failed').slice(0, 80)"></span>
+                            <span class="muted small" x-show="r.status === 'ok'">— done</span>
+                            <span class="muted small" x-show="r.status === 'running'">— running…</span>
+                        </li>
+                    </template>
+                </ul>
+                <div class="muted small" x-show="bootstrap.finished_at && !bootstrap.running" style="margin-top: 6px;">
+                    Finished <span x-text="formatDate(bootstrap.finished_at)"></span>.
+                </div>
+            </div>
+            <button class="btn-primary" @click="triggerBootstrap()" :disabled="bootstrap.running"
+                    x-text="bootstrap.running ? 'Running…' : 'Bootstrap everything'"></button>
+        </div>
+
         <!-- ─── One-time backfills ─────────────────────────────────── -->
         <h3 class="scraper-section-h">Historical backfills</h3>
 
@@ -2205,7 +2238,7 @@
     <script src="/js/tabs/table.js?v=5"></script>
     <script src="/js/tabs/analytics.js?v=5"></script>
     <script src="/js/tabs/families.js?v=6"></script>
-    <script src="/js/tabs/scraper.js?v=2"></script>
+    <script src="/js/tabs/scraper.js?v=3"></script>
     <script src="/js/tabs/export.js?v=1"></script>
     <script src="/js/tabs/panel.js?v=5"></script>
     <script src="/js/tabs/profile.js?v=25"></script>

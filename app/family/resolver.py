@@ -15,10 +15,28 @@ def looks_like_billionaire(description):
 
 
 def resolve_qid(name):
+    """Resolve a person name to a Wikidata QID.
+
+    Strategy:
+      1. Wikidata search returns ranked candidates. The first whose
+         description matches a business hint (entrepreneur, CEO,
+         investor…) wins. The hint filter prevents homonyms — picking
+         "Mark Zuckerberg the historian" over the Facebook CEO.
+      2. Single-candidate fallback. If only ONE candidate came back
+         and it has a description (= not a stub), accept it even if
+         the description doesn't carry a hint word. With a unique
+         match there's no homonym risk; the most common reason to
+         miss otherwise is a Wikidata description like "Indian
+         executive" or "American family" without one of our keywords.
+         This widens coverage of downstream jobs (Wikipedia news
+         backfill, family network) significantly.
+    """
     candidates = search_candidates(name)
     for c in candidates:
         if looks_like_billionaire(c.get("description")):
             return c["id"]
+    if len(candidates) == 1 and candidates[0].get("description"):
+        return candidates[0]["id"]
     return None
 
 

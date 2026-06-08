@@ -92,11 +92,18 @@ ENTITY_KIND_BY_INSTANCE = {
 }
 
 BUSINESS_HINTS = (
-    "businessman", "businesswoman", "billionaire", "investor",
+    "businessman", "businesswoman", "businessperson",
+    "billionaire", "investor",
     "entrepreneur", "ceo", "founder", "co-founder", "banker",
     "magnate", "heiress", "heir ", "tycoon", "executive",
-    "chairman", "chairwoman", "chief executive",
+    "chairman", "chairwoman", "chief executive", "chief financial",
     "industrialist", "financier", "philanthropist",
+    # Wikidata sometimes describes founders by their company, e.g.
+    # "American business" / "owner of …".
+    "business", "owner of", "co-owner",
+    # Sector-specific framings that show up in real Wikidata descriptions.
+    "real estate developer", "media proprietor", "newspaper publisher",
+    "venture capital", "hedge fund",
     # Bloomberg lists family-controlled fortunes as e.g. "Walton family";
     # Wikidata describes those as "American family" / "wealthy family".
     "family", "dynasty",
