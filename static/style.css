@@ -839,6 +839,70 @@ h3 { font-size: 15px; margin-bottom: 12px; }
 }
 .deep-dive-panel.open { transform: translateX(0); }
 
+/* Pair-comparison panel — slightly wider than the country deep-dive
+   so the side-by-side cards fit comfortably. Inherits everything else
+   from .deep-dive-panel. */
+.compare-pair-panel { width: 640px; }
+.compare-correlation-banner {
+    display: flex; align-items: center; gap: 12px;
+    padding: 12px 14px; margin-bottom: 14px;
+    background: #f5f3ff; border-radius: 8px;
+}
+.compare-r {
+    font-size: 28px; font-weight: 700;
+    font-variant-numeric: tabular-nums;
+}
+.compare-r.pos { color: #2e8b6e; }
+.compare-r.neg { color: #c0392b; }
+.compare-cards {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 14px;
+    margin-bottom: 14px;
+}
+.compare-card {
+    background: #f7f7fa; border-radius: 8px; padding: 12px;
+}
+.compare-card-header {
+    display: flex; align-items: center; gap: 10px; margin-bottom: 10px;
+}
+.compare-photo {
+    width: 44px; height: 44px; border-radius: 50%;
+    object-fit: cover; flex-shrink: 0;
+    background: #ddd;
+}
+.compare-name {
+    font-weight: 600; font-size: 14px; cursor: pointer;
+}
+.compare-stats {
+    list-style: none; padding: 0; margin: 0;
+    font-size: 13px;
+}
+.compare-stats li {
+    display: flex; justify-content: space-between;
+    padding: 3px 0;
+    border-top: 1px solid #ebe8f1;
+}
+.compare-stats li:first-child { border-top: none; }
+.compare-stats .pos { color: #2e8b6e; font-weight: 600; }
+.compare-stats .neg { color: #c0392b; font-weight: 600; }
+.compare-hints {
+    font-size: 12px;
+    margin: 8px 0 14px;
+}
+.compare-tag {
+    display: inline-block; margin-left: 8px;
+    padding: 2px 8px; border-radius: 10px;
+    background: #e0d7ff; color: #4a3d8c;
+    font-size: 11px; font-weight: 600;
+}
+.compare-chart-wrap {
+    height: 280px;
+    margin-top: 6px;
+}
+.compare-chart-wrap canvas {
+    width: 100% !important;
+    height: 100% !important;
+}
+
 .deep-dive-header {
     display: flex; justify-content: space-between; align-items: flex-start;
     padding: 20px 24px 12px; border-bottom: 1px solid #eee;

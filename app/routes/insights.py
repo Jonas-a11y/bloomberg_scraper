@@ -1199,6 +1199,182 @@ def _correlation_python(pids, name_by_pid, rows, days, threshold):
     }
 
 
+@router.get("/insights/compare-pair")
+def compare_pair(a: int, b: int, days: int = 365):
+    """Side-by-side data for two billionaires + their pair-correlation.
+
+    Used by the wealth-correlation heatmap: clicking a cell opens a
+    comparison modal that needs both persons' headline stats and a
+    chart of their wealth on the same time axis. Single round-trip.
+
+    Returns:
+      {
+        a: {person_id, name, snapshot:{rank,wealth,...},
+            citizenship, industry, age, gender, image_url},
+        b: { ... same shape },
+        correlation: {r, n_days, days, threshold},
+        history: [
+          {date, a_norm, b_norm, a_usd, b_usd}  # both normalised to 100
+        ],
+        shared: {country, industry}  # quick "why correlated?" hints
+      }
+
+    Cached per (a, b, days) — same numpy correlation core but only
+    one pair, so it's cheap. We share the cached underlying log-return
+    helpers via the routine wealth_correlation already uses.
+    """
+    days = max(30, min(int(days), 3650))
+    return insights_cache.cached_or_compute(
+        "/insights/compare-pair",
+        {"a": a, "b": b, "days": days},
+        lambda: _compare_pair_compute(a, b, days),
+        ttl_sec=6 * 3600,
+    )[0]
+
+
+def _compare_pair_compute(a: int, b: int, days: int):
+    import math
+    from datetime import date, timedelta
+    from app.database import get_network_db
+
+    end = date.today()
+    start = end - timedelta(days=days)
+
+    main = get_db()
+
+    def _person_stats(pid):
+        p = main.execute(
+            """
+            SELECT p.person_id, p.common_name AS name, p.full_name,
+                   p.citizenship, p.industry, p.age, p.gender
+            FROM persons p
+            WHERE p.person_id = ?
+            """,
+            (pid,),
+        ).fetchone()
+        if not p:
+            return None
+        snap = main.execute(
+            """
+            SELECT s.scraped_at, s.rank, s.net_worth_usd,
+                   s.last_change_usd, s.ytd_change_usd
+            FROM snapshots s
+            WHERE s.person_id = ?
+            ORDER BY s.scraped_at DESC LIMIT 1
+            """,
+            (pid,),
+        ).fetchone()
+        return {**dict(p), "snapshot": dict(snap) if snap else None}
+
+    A = _person_stats(a)
+    B = _person_stats(b)
+    if not A or not B:
+        main.close()
+        return {"error": "person_not_found"}
+
+    # Wealth history for both, in the chosen window.
+    rows_a = main.execute(
+        "SELECT date, net_worth_usd FROM wealth_history "
+        "WHERE person_id = ? AND date >= ? AND date <= ? ORDER BY date",
+        (a, start.isoformat(), end.isoformat()),
+    ).fetchall()
+    rows_b = main.execute(
+        "SELECT date, net_worth_usd FROM wealth_history "
+        "WHERE person_id = ? AND date >= ? AND date <= ? ORDER BY date",
+        (b, start.isoformat(), end.isoformat()),
+    ).fetchall()
+
+    # Pull image URLs for headers — same query the profile uses.
+    image_by_pid = {}
+    try:
+        net = get_network_db()
+        for r in net.execute(
+            "SELECT person_id, image_url FROM persons_index "
+            "WHERE person_id IN (?, ?)",
+            (a, b),
+        ).fetchall():
+            if r["image_url"]:
+                image_by_pid[r["person_id"]] = r["image_url"]
+        net.close()
+    except Exception:
+        pass
+    main.close()
+
+    A["image_url"] = image_by_pid.get(a)
+    B["image_url"] = image_by_pid.get(b)
+
+    # Build a unified history: each row has both A and B normalised
+    # to 100 at first observation (so the chart shows relative
+    # movement, comparable regardless of absolute scale).
+    a_by_date = {r["date"]: r["net_worth_usd"] for r in rows_a if r["net_worth_usd"]}
+    b_by_date = {r["date"]: r["net_worth_usd"] for r in rows_b if r["net_worth_usd"]}
+    common_dates = sorted(set(a_by_date.keys()) & set(b_by_date.keys()))
+    if common_dates:
+        a0 = a_by_date[common_dates[0]]
+        b0 = b_by_date[common_dates[0]]
+    else:
+        a0 = b0 = None
+
+    history = []
+    for d in common_dates:
+        a_v = a_by_date[d]
+        b_v = b_by_date[d]
+        history.append({
+            "date": d,
+            "a_usd": a_v,
+            "b_usd": b_v,
+            "a_norm": round(a_v / a0 * 100, 2) if a0 else None,
+            "b_norm": round(b_v / b0 * 100, 2) if b0 else None,
+        })
+
+    # Compute correlation directly on the common-date log returns —
+    # no need to call the full N×N machinery for one pair.
+    if len(common_dates) >= 30:
+        ra, rb = [], []
+        for i in range(1, len(common_dates)):
+            d_prev = common_dates[i - 1]
+            d_curr = common_dates[i]
+            wa_prev, wa_curr = a_by_date[d_prev], a_by_date[d_curr]
+            wb_prev, wb_curr = b_by_date[d_prev], b_by_date[d_curr]
+            if all(x and x > 0 for x in (wa_prev, wa_curr, wb_prev, wb_curr)):
+                ra.append(math.log(wa_curr / wa_prev))
+                rb.append(math.log(wb_curr / wb_prev))
+        if len(ra) >= 30:
+            mx = sum(ra) / len(ra)
+            my = sum(rb) / len(rb)
+            sx = sum((x - mx) ** 2 for x in ra) ** 0.5
+            sy = sum((y - my) ** 2 for y in rb) ** 0.5
+            if sx > 0 and sy > 0:
+                cov = sum((x - mx) * (y - my) for x, y in zip(ra, rb))
+                r_value = round(cov / (sx * sy), 3)
+            else:
+                r_value = None
+            n_obs = len(ra)
+        else:
+            r_value, n_obs = None, len(ra)
+    else:
+        r_value, n_obs = None, len(common_dates)
+
+    # "Why might they correlate?" hints — quick wins for the user.
+    shared = {
+        "industry": A["industry"] if A["industry"] and A["industry"] == B["industry"] else None,
+        "country": A["citizenship"] if A["citizenship"] and A["citizenship"] == B["citizenship"] else None,
+    }
+
+    return {
+        "a": A,
+        "b": B,
+        "correlation": {
+            "r": r_value,
+            "n_days": n_obs,
+            "days_window": days,
+            "common_dates": len(common_dates),
+        },
+        "history": history,
+        "shared": shared,
+    }
+
+
 @router.get("/insights/geo-migration")
 def geo_migration():
     """Birth country → residence country flows from Wikidata metadata.

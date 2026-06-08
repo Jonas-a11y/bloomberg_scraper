@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Bloomberg Scraper</title>
-    <link rel="stylesheet" href="/style.css?v=53">
+    <link rel="stylesheet" href="/style.css?v=54">
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
     <script src="https://cdn.jsdelivr.net/npm/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
@@ -1088,6 +1088,110 @@
                         <p class="muted small" style="margin-top: 12px;" x-show="deepDiveMarket.fetched_at">
                             Sources: <span x-text="(deepDiveMarket.sources || []).join(', ') || 'none'"></span>.
                             Cached up to 6h.
+                        </p>
+                    </div>
+                </template>
+            </div>
+        </aside>
+
+        <!-- Pair-comparison panel: opens when the user clicks a cell
+             in the wealth-correlation heatmap. Shows both persons'
+             headline stats, a normalized side-by-side wealth chart,
+             and quick "why correlated?" hints (shared industry /
+             country). -->
+        <div class="deep-dive-overlay" x-show="comparePairOpen" @click="closeComparePair()" x-transition.opacity></div>
+        <aside class="deep-dive-panel compare-pair-panel" :class="{ open: comparePairOpen }">
+            <div class="deep-dive-header">
+                <div>
+                    <span class="muted small">Pair comparison</span>
+                    <h2 x-show="comparePair?.a && comparePair?.b">
+                        <span x-text="comparePair?.a?.name"></span>
+                        <span class="muted small">vs</span>
+                        <span x-text="comparePair?.b?.name"></span>
+                    </h2>
+                </div>
+                <button class="panel-close" @click="closeComparePair()">×</button>
+            </div>
+            <div class="deep-dive-content">
+                <div x-show="comparePairLoading" class="muted small">Loading…</div>
+                <template x-if="comparePair && !comparePairLoading">
+                    <div>
+                        <!-- Correlation banner -->
+                        <div class="compare-correlation-banner">
+                            <span class="compare-r" x-show="comparePair.correlation.r !== null"
+                                  :class="comparePair.correlation.r >= 0 ? 'pos' : 'neg'"
+                                  x-text="(comparePair.correlation.r > 0 ? '+' : '') + (comparePair.correlation.r ?? '—')"></span>
+                            <span class="muted small"
+                                  x-text="'Pearson r over ' + comparePair.correlation.n_days + ' shared trading days (' + comparePair.correlation.days_window + '-day window)'"></span>
+                        </div>
+
+                        <!-- Side-by-side person cards -->
+                        <div class="compare-cards">
+                            <template x-for="key in ['a', 'b']" :key="key">
+                                <div class="compare-card">
+                                    <div class="compare-card-header">
+                                        <img x-show="comparePair[key].image_url"
+                                             :src="comparePair[key].image_url"
+                                             alt="" class="compare-photo">
+                                        <div>
+                                            <a class="compare-name metric-link"
+                                               @click="openProfile(comparePair[key].person_id)"
+                                               x-text="comparePair[key].name"></a>
+                                            <div class="muted small">
+                                                <span x-text="comparePair[key].citizenship || '—'"></span>
+                                                <span x-show="comparePair[key].industry">·
+                                                    <span x-text="comparePair[key].industry"></span>
+                                                </span>
+                                                <span x-show="comparePair[key].age">·
+                                                    <span x-text="comparePair[key].age + 'y'"></span>
+                                                </span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <ul class="compare-stats">
+                                        <li>
+                                            <span class="muted small">Rank</span>
+                                            <span x-text="comparePair[key].snapshot ? '#' + comparePair[key].snapshot.rank : '—'"></span>
+                                        </li>
+                                        <li>
+                                            <span class="muted small">Net worth</span>
+                                            <span x-text="comparePair[key].snapshot ? formatWealth(comparePair[key].snapshot.net_worth_usd) : '—'"></span>
+                                        </li>
+                                        <li>
+                                            <span class="muted small">YTD change</span>
+                                            <span :class="comparePair[key].snapshot?.ytd_change_usd >= 0 ? 'pos' : 'neg'"
+                                                  x-text="comparePair[key].snapshot ? formatChange(comparePair[key].snapshot.ytd_change_usd) : '—'"></span>
+                                        </li>
+                                        <li>
+                                            <span class="muted small">Last day</span>
+                                            <span :class="comparePair[key].snapshot?.last_change_usd >= 0 ? 'pos' : 'neg'"
+                                                  x-text="comparePair[key].snapshot ? formatChange(comparePair[key].snapshot.last_change_usd) : '—'"></span>
+                                        </li>
+                                    </ul>
+                                </div>
+                            </template>
+                        </div>
+
+                        <!-- Why might they correlate? -->
+                        <div class="compare-hints" x-show="comparePair.shared.industry || comparePair.shared.country">
+                            <strong>Shared:</strong>
+                            <span class="compare-tag" x-show="comparePair.shared.industry"
+                                  x-text="'Industry: ' + comparePair.shared.industry"></span>
+                            <span class="compare-tag" x-show="comparePair.shared.country"
+                                  x-text="'Country: ' + comparePair.shared.country"></span>
+                        </div>
+
+                        <!-- Normalized history chart -->
+                        <h4 class="deep-dive-section-h">Normalized wealth (both = 100 at start)</h4>
+                        <div class="compare-chart-wrap" x-show="comparePair.history?.length">
+                            <canvas id="comparePairChart"></canvas>
+                        </div>
+                        <p class="muted small" x-show="!comparePair.history?.length">
+                            Not enough overlapping daily history to chart. Try a longer window.
+                        </p>
+
+                        <p class="muted small" style="margin-top: 12px;">
+                            Click a name to open the full profile.
                         </p>
                     </div>
                 </template>
@@ -2304,7 +2408,7 @@
     <script src="/js/tabs/export.js?v=1"></script>
     <script src="/js/tabs/panel.js?v=5"></script>
     <script src="/js/tabs/profile.js?v=25"></script>
-    <script src="/js/tabs/insights.js?v=13"></script>
+    <script src="/js/tabs/insights.js?v=14"></script>
     <script src="/app.js?v=36"></script>
 </body>
 </html>

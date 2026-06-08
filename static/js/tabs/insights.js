@@ -594,6 +594,11 @@ function insightsMixin() {
         insightsCorrelationN: 30,
         insightsCorrelationDays: 365,
 
+        // ─── Pair-comparison panel (opened from a heatmap cell click) ────
+        comparePairOpen: false,
+        comparePairLoading: false,
+        comparePair: null,         // { a, b, correlation, history, shared }
+
         // ─── Country / Industry deep-dive side panel ─────────────────────
         deepDiveOpen: false,
         deepDiveKind: '',          // 'country' | 'industry'
@@ -1011,6 +1016,117 @@ function insightsMixin() {
             const onLeave = () => { tooltip.style.display = 'none'; };
             canvas.onmousemove = onMove;
             canvas.onmouseleave = onLeave;
+            // Click → open the pair-comparison modal. Skip the
+            // diagonal (self) and any cell with no overlap data.
+            canvas.onclick = (e) => {
+                const rect = canvas.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const y = e.clientY - rect.top;
+                const j = Math.floor(x / cellPx);
+                const i = Math.floor(y / cellPx);
+                if (i < 0 || i >= n || j < 0 || j >= n) return;
+                if (i === j) return;
+                const r = matrix[i]?.[j];
+                if (r === null || r === undefined) return;
+                this.openComparePair(persons[i], persons[j]);
+            };
+        },
+
+        // ─── Pair comparison modal ──────────────────────────────────────
+        // Opened from a click on a heatmap cell. Reuses the deep-dive
+        // panel pattern (overlay + sliding aside) for visual consistency.
+        async openComparePair(personA, personB) {
+            this.comparePairOpen = true;
+            this.comparePairLoading = true;
+            this.comparePair = null;
+            try {
+                const days = this.insightsCorrelationDays || 365;
+                const url = `/api/insights/compare-pair?a=${personA.person_id}` +
+                            `&b=${personB.person_id}&days=${days}`;
+                this.comparePair = await fetch(url).then(r => r.json());
+            } finally {
+                this.comparePairLoading = false;
+            }
+            this.$nextTick(() => this.renderComparePairChart());
+        },
+
+        closeComparePair() {
+            this.comparePairOpen = false;
+            // Tear down the chart so reopening always builds fresh.
+            const prev = _insightsCharts.get('comparePairChart');
+            if (prev) {
+                prev.destroy();
+                _insightsCharts.delete('comparePairChart');
+            }
+        },
+
+        renderComparePairChart() {
+            const canvas = document.getElementById('comparePairChart');
+            if (!canvas || !this.comparePair?.history?.length) return;
+            // Rebuild on every open — same canvas, fresh data.
+            const prev = _insightsCharts.get('comparePairChart');
+            if (prev) prev.destroy();
+            const h = this.comparePair.history;
+            const aName = this.comparePair.a.name;
+            const bName = this.comparePair.b.name;
+            const chart = new Chart(canvas, {
+                type: 'line',
+                data: {
+                    labels: h.map(p => p.date),
+                    datasets: [
+                        {
+                            label: aName,
+                            data: h.map(p => p.a_norm),
+                            borderColor: '#6c5ce7',
+                            backgroundColor: 'rgba(108,92,231,0.08)',
+                            borderWidth: 2,
+                            fill: false,
+                            pointRadius: 0,
+                            tension: 0.15,
+                        },
+                        {
+                            label: bName,
+                            data: h.map(p => p.b_norm),
+                            borderColor: '#5ad1c7',
+                            backgroundColor: 'rgba(90,209,199,0.08)',
+                            borderWidth: 2,
+                            fill: false,
+                            pointRadius: 0,
+                            tension: 0.15,
+                        },
+                    ],
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: { mode: 'index', intersect: false },
+                    plugins: {
+                        legend: { position: 'top', align: 'start' },
+                        tooltip: {
+                            callbacks: {
+                                // Show both the indexed value (rebased
+                                // to 100) and the underlying USD wealth
+                                // for context.
+                                afterBody: (items) => {
+                                    if (!items?.length) return '';
+                                    const idx = items[0].dataIndex;
+                                    const row = h[idx];
+                                    return [
+                                        `${aName}: ${formatWealth(row.a_usd)}`,
+                                        `${bName}: ${formatWealth(row.b_usd)}`,
+                                    ];
+                                },
+                                label: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y?.toFixed(1)}`,
+                            },
+                        },
+                    },
+                    scales: {
+                        x: { ticks: { maxTicksLimit: 8 }, grid: { display: false } },
+                        y: { title: { display: true, text: 'Indexed (start = 100)' } },
+                    },
+                },
+            });
+            _insightsCharts.set('comparePairChart', chart);
         },
 
         // ─── Migration table view (no map dep) ───────────────────────────
