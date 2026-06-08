@@ -14,6 +14,8 @@ data/
 # Standalone scripts (not part of the web app)
 scrape_bloomberg.py
 build_master_dataset.py
+build_plotly_report.py
+bloomberg_charts.html
 
 # Tests (kept out of public repo)
 tests/
