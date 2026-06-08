@@ -67,22 +67,56 @@ def download_dataset(target_dir=DEFAULT_DOWNLOAD_DIR, force=False):
     # Path 1: Python API. Avoids the subprocess entirely — same
     # interpreter, same dependency tree. Works on a deployment that
     # has the `kaggle` pip package but no shell wrapper on $PATH.
+    #
+    # Pre-flight: check creds BEFORE importing kaggle. Recent versions
+    # of the `kaggle` package call sys.exit() during import-time auth
+    # probing when no credentials are present — that raises SystemExit
+    # which would bypass our `except Exception` and tear down the
+    # background bootstrap thread mid-step. We test for the credential
+    # locations the kaggle package looks at (env vars + ~/.kaggle/) and
+    # short-circuit with a clean RuntimeError if nothing's set up.
+    has_env_creds = bool(
+        os.environ.get("KAGGLE_USERNAME") and os.environ.get("KAGGLE_KEY")
+    ) or bool(os.environ.get("KAGGLE_API_TOKEN"))
+    has_file_creds = (
+        Path.home() / ".kaggle" / "kaggle.json"
+    ).exists() or (
+        Path.home() / ".kaggle" / "access_token"
+    ).exists()
+
     py_err = None
-    try:
-        from kaggle.api.kaggle_api_extended import KaggleApi
-        api = KaggleApi()
-        api.authenticate()
-        api.dataset_download_files(
-            KAGGLE_DATASET, path=str(target_dir), unzip=True, quiet=True,
+    if not (has_env_creds or has_file_creds):
+        py_err = (
+            "no Kaggle credentials found in env (KAGGLE_USERNAME+KAGGLE_KEY) "
+            "or ~/.kaggle/"
         )
-    except ImportError as e:
-        py_err = f"kaggle Python package not importable: {e}"
-    except Exception as e:
-        msg = str(e).lower()
-        if ("credentials" in msg or "401" in msg or "403" in msg
-                or "kaggle.json" in msg or "could not find" in msg):
-            raise RuntimeError(auth_hint) from e
-        py_err = f"kaggle Python API failed: {e}"
+    else:
+        try:
+            from kaggle.api.kaggle_api_extended import KaggleApi
+            api = KaggleApi()
+            api.authenticate()
+            api.dataset_download_files(
+                KAGGLE_DATASET, path=str(target_dir), unzip=True, quiet=True,
+            )
+        except ImportError as e:
+            py_err = f"kaggle Python package not importable: {e}"
+        except SystemExit as e:
+            # kaggle's module-level auth probe calls sys.exit() — turn
+            # that into a normal exception so the caller (bootstrap
+            # pipeline) records it as a failed step instead of dying.
+            py_err = f"kaggle Python API exited during auth (code {e.code})"
+        except Exception as e:
+            msg = str(e).lower()
+            if ("credentials" in msg or "401" in msg or "403" in msg
+                    or "kaggle.json" in msg or "could not find" in msg):
+                raise RuntimeError(auth_hint) from e
+            py_err = f"kaggle Python API failed: {e}"
+
+    # If the Python path produced an unrecoverable auth error message,
+    # short-circuit with the install/auth instructions instead of
+    # falling through to the (also-broken) shell CLI.
+    if py_err and "no Kaggle credentials" in py_err:
+        raise RuntimeError(auth_hint)
 
     # Path 2: shell CLI (legacy / diagnostic). Only attempted if the
     # Python path didn't already produce CSVs.

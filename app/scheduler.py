@@ -845,6 +845,19 @@ def run_bootstrap():
                 logger.exception(f"Bootstrap step '{step['key']}' failed")
                 result["status"] = "error"
                 result["error"] = str(e)
+            except BaseException as e:
+                # SystemExit / KeyboardInterrupt — typically from a
+                # third-party package that calls sys.exit() on error
+                # (e.g. older `kaggle` versions). Treat as a normal
+                # step failure: record it and let the pipeline continue
+                # rather than letting BaseException tear down the
+                # background thread mid-run and strand `running=True`.
+                logger.error(
+                    f"Bootstrap step '{step['key']}' raised "
+                    f"{type(e).__name__}: {e}"
+                )
+                result["status"] = "error"
+                result["error"] = f"{type(e).__name__}: {e}"
             finally:
                 result["finished_at"] = datetime.now().isoformat()
         ok = sum(1 for r in _bootstrap_state["step_results"] if r["status"] == "ok")
