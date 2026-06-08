@@ -234,16 +234,32 @@ SNAPSHOT_COLUMNS = [
 
 def get_db(db_path=None):
     path = str(db_path or DB_PATH)
-    conn = sqlite3.connect(path)
+    # `timeout` controls how long sqlite waits for a write lock before
+    # raising `database is locked`. Default is 5s — too short when a
+    # long-running backfill (forbes-kaggle, forbes-backfill, network
+    # refresh) is writing while the UI keeps reading. 30s gives those
+    # jobs room to finish without surfacing 500s on /scraper/status,
+    # /insights/*, /analytics/*, etc.
+    conn = sqlite3.connect(path, timeout=30.0)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    # WAL mode lets readers run concurrently with a single writer —
+    # without it, every SELECT blocks during a write transaction.
+    # `journal_mode` is persistent on the file once set; safe to
+    # invoke on every connect.
+    conn.execute("PRAGMA journal_mode = WAL")
+    # `busy_timeout` is the SQLite-level retry knob. Belt-and-braces
+    # with `timeout=` above (the Python driver also retries internally).
+    conn.execute("PRAGMA busy_timeout = 30000")
     return conn
 
 
 def get_network_db(db_path=None):
     path = str(db_path or NETWORK_DB_PATH)
-    conn = sqlite3.connect(path)
+    conn = sqlite3.connect(path, timeout=30.0)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA busy_timeout = 30000")
     return conn
 
 
