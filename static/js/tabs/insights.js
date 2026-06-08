@@ -934,39 +934,83 @@ function insightsMixin() {
         // ─── Correlation heatmap ─────────────────────────────────────────
 
         renderCorrelationHeatmap() {
-            // Build an HTML grid (cells colored by Pearson r). Chart.js's
-            // matrix plugin would be heavier; this stays vanilla.
-            const root = document.getElementById('insightsCorrHeatmap');
-            if (!root || !this.insightsCorrelation) return;
+            // Canvas-based heatmap. The previous implementation built
+            // N² DOM divs, which works for N=30 but stalls the browser
+            // at N=200+. A single <canvas> renders 500×500 = 250k
+            // cells in milliseconds via fillRect.
+            //
+            // Tooltip is a separately-positioned <div> driven by
+            // mousemove → cell-index math; cheaper than per-cell event
+            // listeners and works at any N.
+            const canvas = document.getElementById('insightsCorrHeatmap');
+            const tooltip = document.getElementById('insightsCorrTooltip');
+            if (!canvas || !this.insightsCorrelation) return;
             const { persons, matrix } = this.insightsCorrelation;
             const n = persons.length;
-            const cellPx = Math.max(8, Math.floor(380 / n));
-            // Reset
-            root.innerHTML = '';
-            root.style.gridTemplateColumns = `repeat(${n}, ${cellPx}px)`;
+            if (!n) return;
+
+            // Target a heatmap whose total CSS size is ~420px on the
+            // long edge, so we always match the surrounding card.
+            const SIZE_PX = 420;
+            const cellPx = Math.max(1, Math.floor(SIZE_PX / n));
+            const totalPx = cellPx * n;
+
+            // Up-scale for retina so the colors don't smear.
+            const dpr = window.devicePixelRatio || 1;
+            canvas.style.width = `${totalPx}px`;
+            canvas.style.height = `${totalPx}px`;
+            canvas.width = totalPx * dpr;
+            canvas.height = totalPx * dpr;
+            const ctx = canvas.getContext('2d');
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+            // Diverging color: red(-1) → white(0) → teal(+1). Same
+            // scale as the previous DOM version.
             for (let i = 0; i < n; i++) {
                 for (let j = 0; j < n; j++) {
                     const r = matrix[i]?.[j];
-                    const cell = document.createElement('div');
-                    cell.className = 'corr-cell';
-                    cell.style.width = `${cellPx}px`;
-                    cell.style.height = `${cellPx}px`;
                     if (r === null || r === undefined) {
-                        cell.style.background = '#eee';
+                        ctx.fillStyle = '#eee';
                     } else {
-                        // Diverging color: red (-1) → white (0) → teal (+1)
                         const v = Math.max(-1, Math.min(1, r));
                         const hue = v > 0 ? 174 : 0;
                         const sat = Math.abs(v) * 80;
                         const lum = 100 - Math.abs(v) * 50;
-                        cell.style.background = `hsl(${hue} ${sat}% ${lum}%)`;
+                        ctx.fillStyle = `hsl(${hue} ${sat}% ${lum}%)`;
                     }
-                    cell.title = `${persons[i].name} ↔ ${persons[j].name}: r=${r ?? '—'}`;
-                    cell.dataset.i = i;
-                    cell.dataset.j = j;
-                    root.appendChild(cell);
+                    ctx.fillRect(j * cellPx, i * cellPx, cellPx, cellPx);
                 }
             }
+
+            // Wire (or rewire) the tooltip handler. We attach onto the
+            // canvas itself — single listener regardless of N.
+            const onMove = (e) => {
+                const rect = canvas.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const y = e.clientY - rect.top;
+                const j = Math.floor(x / cellPx);
+                const i = Math.floor(y / cellPx);
+                if (i < 0 || i >= n || j < 0 || j >= n) {
+                    tooltip.style.display = 'none';
+                    return;
+                }
+                const r = matrix[i]?.[j];
+                tooltip.innerHTML = (
+                    `<strong>${persons[i].name}</strong><br>` +
+                    `<strong>${persons[j].name}</strong><br>` +
+                    `r = ${r === null || r === undefined ? '—' : r.toFixed(3)}`
+                );
+                tooltip.style.display = 'block';
+                // Position relative to the wrap; nudge so the cursor
+                // doesn't cover the box.
+                const wrap = canvas.parentElement;
+                const wrapRect = wrap.getBoundingClientRect();
+                tooltip.style.left = `${e.clientX - wrapRect.left + 12}px`;
+                tooltip.style.top = `${e.clientY - wrapRect.top + 12}px`;
+            };
+            const onLeave = () => { tooltip.style.display = 'none'; };
+            canvas.onmousemove = onMove;
+            canvas.onmouseleave = onLeave;
         },
 
         // ─── Migration table view (no map dep) ───────────────────────────

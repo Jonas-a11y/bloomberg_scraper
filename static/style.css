@@ -1073,19 +1073,41 @@ h3 { font-size: 15px; margin-bottom: 12px; }
 
 /* Correlation heatmap */
 .corr-layout {
-    display: grid; grid-template-columns: minmax(0, 380px) 1fr;
+    display: grid; grid-template-columns: minmax(0, 440px) 1fr;
     gap: 16px;
 }
 @media (max-width: 768px) {
     .corr-layout { grid-template-columns: 1fr; }
 }
-.corr-heatmap {
-    display: grid; gap: 1px; background: #ccc;
-    border: 1px solid #ccc; padding: 1px;
+
+/* Canvas-based heatmap. Replaces the old DOM-grid version: a single
+   canvas can render a 500×500 cell matrix in milliseconds, where the
+   DOM version stalled the browser past N≈100. The wrap is positioned
+   so the absolute-positioned tooltip can sit on top of the cursor. */
+.corr-heatmap-wrap {
+    position: relative;
     width: max-content; max-width: 100%;
 }
-.corr-cell { transition: outline 0.1s ease; }
-.corr-cell:hover { outline: 2px solid #1a1a2e; outline-offset: -1px; z-index: 2; position: relative; }
+.corr-heatmap-canvas {
+    display: block;
+    border: 1px solid #ccc;
+    image-rendering: pixelated;     /* keep cell edges crisp at any zoom */
+    cursor: crosshair;
+}
+.corr-tooltip {
+    position: absolute;
+    z-index: 10;
+    background: rgba(26,26,46,0.92);
+    color: white;
+    padding: 6px 10px;
+    border-radius: 6px;
+    font-size: 11px;
+    line-height: 1.4;
+    pointer-events: none;
+    white-space: nowrap;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+}
+
 .corr-pairs h4, .migration-col h4 {
     font-size: 11px; color: #6c5ce7;
     text-transform: uppercase; letter-spacing: 0.05em;

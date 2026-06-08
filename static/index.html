@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Bloomberg Scraper</title>
-    <link rel="stylesheet" href="/style.css?v=52">
+    <link rel="stylesheet" href="/style.css?v=53">
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
     <script src="https://cdn.jsdelivr.net/npm/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
@@ -780,16 +780,28 @@
             <div class="insights-card insights-card-wide">
                 <div class="insights-card-header">
                     <h3>Pairwise wealth correlation (top
-                        <input type="number" x-model.number="insightsCorrelationN" @change="loadInsightsCorrelation()" min="5" max="50" class="insights-year-input">,
-                        <input type="number" x-model.number="insightsCorrelationDays" @change="loadInsightsCorrelation()" min="30" max="3650" class="insights-year-input"> days)<span class="help-icon" title="Pearson correlation of daily log-returns for every pair of top-N billionaires over the chosen window. Pairs with r ≈ 1 move in lockstep — usually because they share underlying assets (Page+Brin both Alphabet, Walton heirs all WMT, co-founders of the same company). Discovered from data alone, no domain knowledge.">?</span>
+                        <input type="number" x-model.number="insightsCorrelationN" @change="loadInsightsCorrelation()" min="5" max="500" class="insights-year-input">,
+                        <input type="number" x-model.number="insightsCorrelationDays" @change="loadInsightsCorrelation()" min="30" max="3650" class="insights-year-input"> days)<span class="help-icon" title="Pearson correlation of daily log-returns for every pair of top-N billionaires over the chosen window. Pairs with r ≈ 1 move in lockstep — usually because they share underlying assets (Page+Brin both Alphabet, Walton heirs all WMT, co-founders of the same company). Discovered from data alone, no domain knowledge. Up to N=500 supported.">?</span>
                     </h3>
+                    <div class="muted small">
+                        Quick presets:
+                        <button class="btn-sm" @click="insightsCorrelationN = 30; loadInsightsCorrelation()">30</button>
+                        <button class="btn-sm" @click="insightsCorrelationN = 100; loadInsightsCorrelation()">100</button>
+                        <button class="btn-sm" @click="insightsCorrelationN = 250; loadInsightsCorrelation()">250</button>
+                        <button class="btn-sm" @click="insightsCorrelationN = 500; loadInsightsCorrelation()">500</button>
+                        <span x-show="insightsCorrelation?.persons?.length" class="muted small"
+                              x-text="' · ' + (insightsCorrelation?.persons?.length || 0) + ' persons, ' + (insightsCorrelation?.pairs?.length || 0) + ' strong pairs'"></span>
+                    </div>
                 </div>
                 <div class="corr-layout">
-                    <div id="insightsCorrHeatmap" class="corr-heatmap"></div>
+                    <div class="corr-heatmap-wrap">
+                        <canvas id="insightsCorrHeatmap" class="corr-heatmap-canvas"></canvas>
+                        <div id="insightsCorrTooltip" class="corr-tooltip" style="display:none;"></div>
+                    </div>
                     <div class="corr-pairs">
                         <h4>Strongest pairs</h4>
                         <ul>
-                            <template x-for="p in (insightsCorrelation?.pairs || []).slice(0, 8)" :key="p.a_id + '-' + p.b_id">
+                            <template x-for="p in (insightsCorrelation?.pairs || []).slice(0, 12)" :key="p.a_id + '-' + p.b_id">
                                 <li>
                                     <span class="corr-r" x-text="(p.r > 0 ? '+' : '') + p.r.toFixed(2)"
                                           :class="p.r >= 0.95 ? 'corr-r-strong' : ''"></span>
@@ -2292,7 +2304,7 @@
     <script src="/js/tabs/export.js?v=1"></script>
     <script src="/js/tabs/panel.js?v=5"></script>
     <script src="/js/tabs/profile.js?v=25"></script>
-    <script src="/js/tabs/insights.js?v=12"></script>
+    <script src="/js/tabs/insights.js?v=13"></script>
     <script src="/app.js?v=36"></script>
 </body>
 </html>
