@@ -5,6 +5,10 @@ function profileMixin() {
     return {
         profile: null,
         profileChart: null,
+        // Wealth-composition donut on the Assets card. Separate from
+        // profileChart (which is the time series) so opening / closing
+        // the profile doesn't fight Chart.js for the same canvas.
+        profileAssetsDonutChart: null,
         profileRange: 'ALL',
         // News markers on/off — persists in localStorage so the user's
         // preference holds across page reloads. Default ON (most users
@@ -53,7 +57,10 @@ function profileMixin() {
                 public: data.public_assets_json ? JSON.parse(data.public_assets_json) : [],
                 private: data.private_assets_json ? JSON.parse(data.private_assets_json) : [],
             };
-            this.$nextTick(() => this.renderProfileChart());
+            this.$nextTick(() => {
+                this.renderProfileChart();
+                this.renderProfileAssetsDonut();
+            });
         },
 
         setProfileRange(range) {
@@ -183,6 +190,81 @@ function profileMixin() {
                     scales: {
                         x: { type: 'category', ticks: { maxTicksLimit: 8 } },
                         y: { ticks: { callback: v => formatWealth(v) } },
+                    },
+                },
+            });
+        },
+
+        // Wealth composition donut: public / private / cash slice.
+        // Liabilities NOT included — they reduce net worth but
+        // aren't a positive segment of the asset pie. Mirrors the
+        // helper used in the pair-comparison panel for consistency.
+        profileAssetSegments(p) {
+            if (!p) return [];
+            const total = (p.public_assets_total || 0)
+                        + (p.private_assets_total || 0)
+                        + (p.cash_assets_total || 0);
+            if (!total) return [];
+            const segs = [
+                { label: 'Public',  color: '#5ad1c7',
+                  value: p.public_assets_total || 0 },
+                { label: 'Private', color: '#a37fdc',
+                  value: p.private_assets_total || 0 },
+                { label: 'Cash',    color: '#6ec1e4',
+                  value: p.cash_assets_total || 0 },
+            ];
+            return segs
+                .filter(s => s.value > 0)
+                .map(s => ({ ...s, share: s.value / total }));
+        },
+
+        renderProfileAssetsDonut() {
+            const segs = this.profileAssetSegments(this.profile);
+            if (!segs.length) return;
+            const canvas = document.getElementById('profileAssetsDonut');
+            if (!canvas) return;
+            // Defer when not yet painted (Alpine x-show race).
+            if (canvas.clientWidth === 0 || canvas.clientHeight === 0) {
+                requestAnimationFrame(() => this.renderProfileAssetsDonut());
+                return;
+            }
+            // Pin canvas size manually — Chart.js + flex-parent =
+            // squished donut on first paint when responsive=true.
+            const SIZE = 200;
+            const dpr = window.devicePixelRatio || 1;
+            canvas.style.width  = `${SIZE}px`;
+            canvas.style.height = `${SIZE}px`;
+            canvas.width  = SIZE * dpr;
+            canvas.height = SIZE * dpr;
+            if (this.profileAssetsDonutChart) this.profileAssetsDonutChart.destroy();
+            this.profileAssetsDonutChart = new Chart(canvas, {
+                type: 'doughnut',
+                data: {
+                    labels: segs.map(s => s.label),
+                    datasets: [{
+                        data: segs.map(s => s.value),
+                        backgroundColor: segs.map(s => s.color),
+                        borderColor: '#fff',
+                        borderWidth: 2,
+                    }],
+                },
+                options: {
+                    responsive: false,
+                    maintainAspectRatio: true,
+                    devicePixelRatio: dpr,
+                    cutout: '60%',
+                    animation: { duration: 250 },
+                    plugins: {
+                        legend: { display: false }, // we render our own
+                        tooltip: {
+                            callbacks: {
+                                label: (ctx) => {
+                                    const total = ctx.dataset.data.reduce((a, b) => a + b, 0);
+                                    const pct = total ? (ctx.parsed / total * 100).toFixed(1) : 0;
+                                    return `${ctx.label}: ${formatWealth(ctx.parsed)} (${pct}%)`;
+                                },
+                            },
+                        },
                     },
                 },
             });

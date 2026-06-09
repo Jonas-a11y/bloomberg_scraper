@@ -433,25 +433,43 @@ function _drawRaceFrame(now) {
 // Items must be pre-sorted by value descending. We split the rect
 // into rows that minimize aspect ratio.
 function _squarifyTreemap(items, x, y, w, h) {
+    // Bruls/Huijing/van Wijk squarified treemap.
+    //
+    // Build each row ALONG the short side of the remaining rectangle:
+    //   - row stacks items along the short axis
+    //   - thickness (perpendicular to the short axis) = rowSum / shortSide
+    //   - after committing, advance the cursor along the LONG axis
+    //
+    // Concretely on a 492×380 rect (short = 380, long = 492):
+    //   - items in the row stack vertically (along height = 380)
+    //   - row width = rowSum / 380, drawn from curX, full short-axis tall
+    //   - after commit: curX += width; remW -= width
+    //   - the remainder is (492 - width) × 380 — still wider than tall,
+    //     so the next row is again vertical; eventually remW < remH
+    //     and we flip to horizontal rows
     const out = [];
     const total = items.reduce((s, i) => s + (i.value || 0), 0);
     if (total <= 0 || items.length === 0) return out;
 
-    function _layoutRow(row, sideShort, sideLong, startX, startY, vert) {
+    function _layoutRow(row, shortSide, startX, startY, shortIsHeight) {
+        // shortIsHeight=true → short axis is vertical → row is a
+        // vertical column of items, thickness measured horizontally.
+        // shortIsHeight=false → short axis is horizontal → row is a
+        // horizontal strip of items, thickness measured vertically.
         const rowSum = row.reduce((s, i) => s + i.value, 0);
-        const rowThickness = rowSum / sideLong;
+        const rowThickness = rowSum / shortSide;
         let cursor = 0;
         for (const item of row) {
             const itemLen = item.value / rowThickness;
-            const tile = vert ? {
+            const tile = shortIsHeight ? {
                 x: startX,
                 y: startY + cursor,
-                w: rowThickness,
-                h: itemLen,
+                w: rowThickness,   // perpendicular to the row direction
+                h: itemLen,        // along the row direction (vertical)
             } : {
                 x: startX + cursor,
                 y: startY,
-                w: itemLen,
+                w: itemLen,        // along the row direction (horizontal)
                 h: rowThickness,
             };
             out.push({ item: item.item, ...tile });
@@ -460,18 +478,16 @@ function _squarifyTreemap(items, x, y, w, h) {
         return rowThickness;
     }
 
-    function _worstRatio(row, side) {
+    function _worstRatio(row, shortSide) {
         const sum = row.reduce((s, i) => s + i.value, 0);
         if (sum <= 0) return Infinity;
         const minV = Math.min(...row.map(i => i.value));
         const maxV = Math.max(...row.map(i => i.value));
-        return Math.max(
-            (side * side * maxV) / (sum * sum),
-            (sum * sum) / (side * side * minV),
-        );
+        const s2 = shortSide * shortSide;
+        const r2 = sum * sum;
+        return Math.max(s2 * maxV / r2, r2 / (s2 * minV));
     }
 
-    // Scale items so total area = w*h
     const scale = (w * h) / total;
     const scaled = items.map(i => ({
         item: i,
@@ -483,32 +499,35 @@ function _squarifyTreemap(items, x, y, w, h) {
     let i = 0;
     while (i < scaled.length) {
         const item = scaled[i];
-        const sideShort = Math.min(remW, remH);
-        if (sideShort <= 0) break;
-        const sideLong = Math.max(remW, remH);
+        const shortSide = Math.min(remW, remH);
+        if (shortSide <= 0) break;
         const candidate = [...row, item];
-        const candidateWorst = _worstRatio(candidate, sideShort);
-        const currentWorst = row.length ? _worstRatio(row, sideShort) : Infinity;
+        const candidateWorst = _worstRatio(candidate, shortSide);
+        const currentWorst = row.length ? _worstRatio(row, shortSide) : Infinity;
         if (row.length === 0 || candidateWorst <= currentWorst) {
             row = candidate;
             i++;
         } else {
-            // Lay out current row, advance origin
-            const vert = remW > remH;  // vertical row when wider than tall
-            const thickness = _layoutRow(row, sideShort, sideLong, curX, curY, vert);
-            if (vert) {
+            // Commit the row. The short side becomes the row's
+            // along-axis; thickness is consumed off the long side.
+            const shortIsHeight = remH <= remW;
+            const thickness = _layoutRow(row, shortSide, curX, curY, shortIsHeight);
+            if (shortIsHeight) {
+                // Row was a vertical strip; advance horizontally.
                 curX += thickness; remW -= thickness;
             } else {
+                // Row was a horizontal strip; advance vertically.
                 curY += thickness; remH -= thickness;
             }
             row = [];
+            // Don't advance i — re-evaluate the current item against
+            // the new (smaller) remainder.
         }
     }
     if (row.length) {
-        const sideShort = Math.min(remW, remH);
-        const sideLong = Math.max(remW, remH);
-        const vert = remW > remH;
-        _layoutRow(row, sideShort, sideLong, curX, curY, vert);
+        const shortSide = Math.min(remW, remH);
+        const shortIsHeight = remH <= remW;
+        _layoutRow(row, shortSide, curX, curY, shortIsHeight);
     }
     return out;
 }
@@ -1330,6 +1349,16 @@ function insightsMixin() {
                 requestAnimationFrame(() => this.renderDeepDiveDonut());
                 return;
             }
+            // Pin the canvas to a fixed square. Chart.js + flex parents
+            // produce squished donuts when `responsive: true` because
+            // it samples clientWidth before the flex item's width has
+            // settled. We size manually here (with DPR for retina).
+            const SIZE = 200;
+            const dpr = window.devicePixelRatio || 1;
+            canvas.style.width = `${SIZE}px`;
+            canvas.style.height = `${SIZE}px`;
+            canvas.width = SIZE * dpr;
+            canvas.height = SIZE * dpr;
             // Rebuild the chart on every render (the canvas may have
             // been re-attached by Alpine after a tab switch).
             const prev = _insightsCharts.get(canvasId);
@@ -1346,8 +1375,12 @@ function insightsMixin() {
                     }],
                 },
                 options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
+                    // responsive=false: Chart.js will keep our exact
+                    // canvas.width / canvas.height. devicePixelRatio
+                    // makes it sharp on retina without smearing.
+                    responsive: false,
+                    maintainAspectRatio: true,
+                    devicePixelRatio: dpr,
                     cutout: '60%',
                     animation: { duration: 250 },
                     plugins: {

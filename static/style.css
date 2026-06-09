@@ -1059,21 +1059,49 @@ h3 { font-size: 15px; margin-bottom: 12px; }
     display: block;
 }
 
+/* Profile Assets donut — wealth-composition split (public / private /
+   cash). Same visual language as the deep-dive sector donut for
+   consistency. */
+.profile-assets-donut-row {
+    display: flex; align-items: flex-start; gap: 18px;
+    flex-wrap: wrap;
+    margin-bottom: 14px;
+}
+.profile-assets-donut-row canvas {
+    flex: 0 0 auto;
+}
+.profile-assets-donut-legend {
+    list-style: none; padding: 0; margin: 0;
+    flex: 1; min-width: 180px;
+    font-size: 13px;
+}
+.profile-assets-donut-legend li {
+    display: flex; align-items: center; gap: 8px;
+    padding: 4px 0;
+    border-top: 1px solid #f0f0f0;
+}
+.profile-assets-donut-legend li:first-child { border-top: none; }
+.profile-assets-donut-legend li > span:nth-child(2) { flex: 1; }
+.profile-assets-donut-swatch {
+    display: inline-block; width: 10px; height: 10px;
+    border-radius: 2px; flex-shrink: 0;
+}
+
 /* Sector / country breakdown — donut on the left, legend list right.
-   Wraps on narrow panels so a 540px deep-dive still reads cleanly. */
+   Wraps on narrow panels so a 540px deep-dive still reads cleanly.
+   The donut canvas is sized in JS (renderDeepDiveDonut sets explicit
+   pixel dimensions for a sharp render); CSS only owns the layout. */
 .deep-dive-donut-row {
     margin-top: 18px;
 }
 .deep-dive-donut-wrap {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: 18px;
     flex-wrap: wrap;
 }
 .deep-dive-donut-wrap canvas {
-    width: 180px !important;
-    height: 180px !important;
-    flex: 0 0 180px;
+    flex: 0 0 auto;     /* don't let flex stretch / shrink the donut */
 }
 .deep-dive-donut-legend {
     list-style: none; padding: 0; margin: 0;
