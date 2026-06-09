@@ -307,6 +307,84 @@ def _enrich_with_sector(rows, max_workers=30):
     return rows
 
 
+def _collapse_share_classes(rows, cap_tolerance=0.25):
+    """Merge same-company share-class duplicates.
+
+    Yahoo's screener returns voting/non-voting share classes as
+    separate rows even though they're the same underlying company:
+        GOOGL ($4442B) + GOOG ($4418B)  → both "Alphabet Inc."
+        BRK-A ($1049B) + BRK-B ($1052B) → both "Berkshire Hathaway Inc."
+    The treemap and sector breakdown then double-count those companies.
+
+    Rule: rows whose `name` matches exactly (after upper-casing and
+    trimming common suffixes) AND whose market caps are within
+    `cap_tolerance` of each other are treated as the same company.
+    Keep the row with the largest market cap (typically the more
+    liquid voting class) and discard the rest.
+
+    The cap-tolerance gate is what stops us from collapsing things
+    like Wells Fargo common ($251B) with its preferred series
+    WFC-PC ($115B) — same registered name, but the preferred is a
+    legitimately separate security with its own cap.
+
+    Levenshtein-based fuzzy matching was considered and rejected:
+    real share-class duplicates have IDENTICAL names (distance 0),
+    while legitimately separate companies whose names happen to
+    look alike at distance 1-3 (e.g. "Comcast Corp" vs "Comcast
+    Communications") would get incorrectly collapsed.
+    """
+    if not rows:
+        return rows
+
+    def _norm(name):
+        n = (name or "").upper()
+        for suffix in (" CORPORATION", " CORP.", " CORP", " INC.", " INC",
+                       " LIMITED", " LTD.", " LTD", " HOLDINGS", " HOLDING",
+                       " GROUP", " PLC", " AG", " S.A.", " SA", " SE",
+                       " CO.", " CO", " N.V.", " NV"):
+            if n.endswith(suffix):
+                n = n[: -len(suffix)].strip()
+        # Drop trailing punctuation
+        return n.strip(".,").strip()
+
+    # Bucket rows by normalized name. Within each bucket, group by
+    # cap proximity: a row joins an existing group if its cap is
+    # within `cap_tolerance` of the group's representative cap.
+    by_name = {}
+    for r in rows:
+        key = _norm(r.get("name"))
+        if not key:
+            # Without a usable name we can't dedupe — keep as-is.
+            by_name.setdefault(("__no_name__", id(r)), []).append(r)
+            continue
+        by_name.setdefault(key, []).append(r)
+
+    out = []
+    for key, group in by_name.items():
+        if len(group) == 1:
+            out.append(group[0])
+            continue
+        # Sort the group by cap descending; walk it merging cap-close
+        # rows onto the current representative.
+        group.sort(key=lambda r: -(r.get("market_cap_usd") or 0))
+        kept = []
+        for r in group:
+            cap = r.get("market_cap_usd") or 0
+            collapsed = False
+            for k in kept:
+                k_cap = k.get("market_cap_usd") or 0
+                if k_cap and cap and abs(cap - k_cap) / max(cap, k_cap) <= cap_tolerance:
+                    # Same share class — drop this row, the bigger
+                    # one stays. (Group is cap-sorted, so `k` is
+                    # always the bigger one.)
+                    collapsed = True
+                    break
+            if not collapsed:
+                kept.append(r)
+        out.extend(kept)
+    return out
+
+
 def _yf_screen(region=None, sector=None, limit=25, min_market_cap=1_000_000_000):
     """Query Yahoo Screener for equities matching the filters, ranked
     by market cap descending. Returns a list of normalized dicts with
@@ -598,6 +676,7 @@ def _market_by_country_compute(country: str, limit: int):
             c for c in yahoo
             if (c.get("country") or "").lower() == country_lc
         ]
+        yahoo = _collapse_share_classes(yahoo)
     # Wikidata only when Yahoo found nothing — small markets like
     # Liechtenstein. When Yahoo had results, mixing in zero-cap
     # Wikidata rows muddies both the count and the treemap.
@@ -605,7 +684,7 @@ def _market_by_country_compute(country: str, limit: int):
         companies = _wikidata_companies(country_qid=qid, limit=limit)
         companies = _enrich_with_sector(companies)
     else:
-        # Already enriched above; just trim.
+        # Already enriched + deduped above; just trim.
         companies = yahoo[:limit]
 
     if not companies:
@@ -740,6 +819,10 @@ def _market_by_industry_compute(industry: str, limit: int):
             return home.lower() == expected.lower() or home.lower() == r
 
         yahoo_combined = [c for c in yahoo_combined if _match_home(c)]
+        # Collapse share classes (GOOGL+GOOG, BRK-A+BRK-B, etc.) AFTER
+        # the home-country filter; otherwise we'd dedupe across regions
+        # and risk dropping legitimately separate listings.
+        yahoo_combined = _collapse_share_classes(yahoo_combined)
         # Sort by USD market cap and trim
         yahoo_combined.sort(key=lambda x: -(x.get("market_cap_usd") or 0))
         yahoo_combined = yahoo_combined[:limit]
