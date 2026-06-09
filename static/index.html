@@ -419,7 +419,8 @@
                            :min="new Date(tableAsOfMin || '2001-01-01').getTime()"
                            :max="new Date(tableAsOfMax || new Date().toISOString().slice(0,10)).getTime()"
                            :value="tableAsOfDate ? new Date(tableAsOfDate).getTime() : new Date(tableAsOfMax || new Date().toISOString().slice(0,10)).getTime()"
-                           @input="setTableAsOf(new Date(parseInt($event.target.value)).toISOString().slice(0,10))">
+                           @input="scrubTableAsOf(new Date(parseInt($event.target.value)).toISOString().slice(0,10))"
+                           @change="setTableAsOf(new Date(parseInt($event.target.value)).toISOString().slice(0,10))">
                     <div class="tt-tick-row">
                         <template x-for="y in tableYearTicks()" :key="y">
                             <span class="tt-tick" x-text="y"></span>
@@ -2401,7 +2402,7 @@
     <script src="/js/format.js?v=4"></script>
     <script src="/js/charts.js?v=11"></script>
     <script src="/js/tabs/dashboard.js?v=6"></script>
-    <script src="/js/tabs/table.js?v=5"></script>
+    <script src="/js/tabs/table.js?v=6"></script>
     <script src="/js/tabs/analytics.js?v=5"></script>
     <script src="/js/tabs/families.js?v=6"></script>
     <script src="/js/tabs/scraper.js?v=5"></script>

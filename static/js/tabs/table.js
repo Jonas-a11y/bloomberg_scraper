@@ -55,14 +55,37 @@ function tableMixin() {
             if (p.industry) params.set('industry', p.industry);
             if (p.gender) params.set('gender', p.gender);
             params.set('sort', p.sort);
-            // Time-travel mode: route to /as-of when a historical date is
-            // selected. Filters apply server-side either way.
-            if (this.tableAsOfDate) {
-                params.set('date', this.tableAsOfDate);
-                params.set('limit', '500');
-                this.tableData = await fetch(`/api/billionaires/as-of?${params}`).then(r => r.json());
-            } else {
-                this.tableData = await fetch(`/api/billionaires?${params}`).then(r => r.json());
+
+            // Cancel any prior fetch — the slider can quickly supersede
+            // its own request and we don't want a stale response to
+            // overwrite the latest. AbortController also cuts the
+            // server-side query short, saving DB time.
+            if (this._asOfFetchAbort) {
+                this._asOfFetchAbort.abort();
+            }
+            const ac = new AbortController();
+            this._asOfFetchAbort = ac;
+
+            try {
+                // Time-travel mode: route to /as-of when a historical date is
+                // selected. Filters apply server-side either way.
+                if (this.tableAsOfDate) {
+                    params.set('date', this.tableAsOfDate);
+                    params.set('limit', '500');
+                    this.tableData = await fetch(
+                        `/api/billionaires/as-of?${params}`, { signal: ac.signal },
+                    ).then(r => r.json());
+                } else {
+                    this.tableData = await fetch(
+                        `/api/billionaires?${params}`, { signal: ac.signal },
+                    ).then(r => r.json());
+                }
+            } catch (e) {
+                // Aborted by a newer request — that's expected during
+                // rapid slider movement; let the latest fetch win.
+                if (e.name !== 'AbortError') throw e;
+            } finally {
+                if (this._asOfFetchAbort === ac) this._asOfFetchAbort = null;
             }
         },
 
@@ -87,8 +110,40 @@ function tableMixin() {
         },
 
         setTableAsOf(value) {
+            // Commit point — used by year-preset buttons and the
+            // slider's `change` event (mouseup / keyboard release).
+            // Cancels any debounced fetch from `scrubTableAsOf` so we
+            // don't fire twice on the same final position.
+            if (this._asOfFetchTimer) {
+                clearTimeout(this._asOfFetchTimer);
+                this._asOfFetchTimer = null;
+            }
             this.tableAsOfDate = value || '';
             this.loadTable();
+        },
+
+        // While the user drags the time-travel slider we want instant
+        // visual feedback (the date label updates) but NOT a fetch on
+        // every pixel — sliding from 2001 → today otherwise fires
+        // hundreds of /api/billionaires/as-of requests, each scanning
+        // wealth_history. Strategy:
+        //   - update tableAsOfDate immediately (the date readout
+        //     follows the cursor)
+        //   - debounce the fetch by 250ms (one fetch when the slider
+        //     stops moving for a beat)
+        //   - cancel any in-flight fetch from a previous position so
+        //     we don't waste socket time on results we'll discard
+        _asOfFetchTimer: null,
+        _asOfFetchAbort: null,
+        scrubTableAsOf(value) {
+            this.tableAsOfDate = value || '';
+            if (this._asOfFetchTimer) {
+                clearTimeout(this._asOfFetchTimer);
+            }
+            this._asOfFetchTimer = setTimeout(() => {
+                this._asOfFetchTimer = null;
+                this.loadTable();
+            }, 250);
         },
 
         clearTableAsOf() {
