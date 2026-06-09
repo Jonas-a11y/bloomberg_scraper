@@ -99,19 +99,37 @@ def billionaires_as_of(
     conn = get_db()
 
     # Step 1: per-person Bloomberg observations at-or-before target.
-    # Each person gets at most one row.
+    # For each person we pull THREE values:
+    #   - wealth at-or-before target (the as-of value)
+    #   - wealth at the day before that as-of (drives `last_change_usd`)
+    #   - wealth at the start of target's year (drives `ytd_change_usd`)
+    # The original endpoint only returned the first; we now compute
+    # all three so historical rows have populated Daily / YTD columns
+    # instead of "—" placeholders.
+    target_year_start = f"{target_year}-01-01"
     bloomberg = conn.execute(
         """
         SELECT wh.person_id,
-               MAX(wh.date) AS as_of_date,
+               (SELECT date FROM wealth_history
+                WHERE person_id = wh.person_id AND date <= ?
+                ORDER BY date DESC LIMIT 1) AS as_of_date,
                (SELECT net_worth_usd FROM wealth_history
                 WHERE person_id = wh.person_id AND date <= ?
-                ORDER BY date DESC LIMIT 1) AS net_worth_usd
+                ORDER BY date DESC LIMIT 1) AS net_worth_usd,
+               -- One observation BEFORE the as-of value (skip 1)
+               (SELECT net_worth_usd FROM wealth_history
+                WHERE person_id = wh.person_id AND date <= ?
+                ORDER BY date DESC LIMIT 1 OFFSET 1) AS prev_net_worth_usd,
+               -- First observation of the target's year (or the closest
+               -- before it if year started before our coverage)
+               (SELECT net_worth_usd FROM wealth_history
+                WHERE person_id = wh.person_id AND date <= ?
+                ORDER BY date DESC LIMIT 1) AS year_start_net_worth_usd
         FROM wealth_history wh
         WHERE wh.date <= ?
         GROUP BY wh.person_id
         """,
-        (target, target),
+        (target, target, target, target_year_start, target),
     ).fetchall()
     bloomberg_pids = {r["person_id"] for r in bloomberg}
 
@@ -198,10 +216,35 @@ def billionaires_as_of(
         if b["net_worth_usd"] is None:
             continue
         meta = persons_meta.get(pid, {})
+        # Daily change: as-of - day before. Skip when we don't have
+        # a prior observation (start of coverage).
+        nw = b["net_worth_usd"]
+        prev = b["prev_net_worth_usd"]
+        last_change = (nw - prev) if (nw is not None and prev is not None) else None
+        last_change_pct = (
+            (last_change / prev) if (last_change is not None and prev) else None
+        )
+        # YTD change: as-of - year-start (or earliest prior obs). When
+        # year_start_net_worth_usd is None (person had no data before
+        # the target year) we leave YTD blank rather than show 0.
+        ystart = b["year_start_net_worth_usd"]
+        # Edge: if year_start_net_worth_usd equals nw because the as-of
+        # IS the first observation of the year, YTD reads 0 — which is
+        # correct (zero change since YTD started, by definition).
+        ytd_change = (
+            (nw - ystart) if (nw is not None and ystart is not None) else None
+        )
+        ytd_change_pct = (
+            (ytd_change / ystart) if (ytd_change is not None and ystart) else None
+        )
         rows.append({
             "person_id": pid,
             "as_of_date": b["as_of_date"],
-            "net_worth_usd": b["net_worth_usd"],
+            "net_worth_usd": nw,
+            "last_change_usd": last_change,
+            "last_change_pct": last_change_pct,
+            "ytd_change_usd": ytd_change,
+            "ytd_change_pct": ytd_change_pct,
             "common_name": meta.get("common_name"),
             "full_name": meta.get("full_name"),
             "citizenship": meta.get("citizenship"),
@@ -222,6 +265,11 @@ def billionaires_as_of(
             "person_id": pid,
             "as_of_date": f"{f['year']}-12-31",
             "net_worth_usd": f["net_worth_usd"],
+            # Forbes is annual — no daily / YTD precision available
+            "last_change_usd": None,
+            "last_change_pct": None,
+            "ytd_change_usd": None,
+            "ytd_change_pct": None,
             "common_name": meta.get("common_name") or f["name"],
             "full_name": meta.get("full_name"),
             "citizenship": f["citizenship"] or meta.get("citizenship"),
@@ -261,6 +309,11 @@ def billionaires_as_of(
             "person_id": None,
             "as_of_date": f"{f['year']}-12-31",
             "net_worth_usd": f["net_worth_usd"],
+            # Forbes annual — no daily / YTD precision
+            "last_change_usd": None,
+            "last_change_pct": None,
+            "ytd_change_usd": None,
+            "ytd_change_pct": None,
             "common_name": f["name"],
             "full_name": None,
             "citizenship": f["citizenship"],
@@ -412,7 +465,18 @@ def billionaires_data_range():
 
 
 @router.get("/billionaires/{person_id}/history")
-def person_history(person_id: int):
+def person_history(person_id: int, clean: bool = True):
+    """Wealth history for a single person.
+
+    `clean=True` (default) runs `app.outliers.flag_outliers` over the
+    series and replaces points it identifies as data-quality artifacts
+    (sustained-revaluation jumps that bounce back). The original raw
+    value stays available as `net_worth_usd_raw`, and `outlier=True`
+    is set on the affected rows so chart code can render a marker.
+
+    Pass `?clean=false` to get the unmodified series — useful for
+    debugging the cleaner or when the caller wants the raw data
+    (CSV exports, the audit panel)."""
     conn = get_db()
     cursor = conn.execute(
         "SELECT date AS scraped_at, net_worth_usd FROM wealth_history WHERE person_id = ? ORDER BY date",
@@ -427,6 +491,16 @@ def person_history(person_id: int):
         """, (person_id,))
         rows = [dict(row) for row in cursor.fetchall()]
     conn.close()
+    if clean and rows:
+        from app.outliers import flag_outliers
+        flagged = flag_outliers(rows)
+        # Swap raw → cleaned for charts; keep raw as a sibling field
+        # so the UI / API consumer can audit what changed.
+        for r in flagged:
+            r["net_worth_usd_raw"] = r["net_worth_usd"]
+            if r.get("outlier") and r.get("cleaned") is not None:
+                r["net_worth_usd"] = r["cleaned"]
+        return flagged
     return rows
 
 
