@@ -884,6 +884,64 @@ h3 { font-size: 15px; margin-bottom: 12px; }
 .compare-stats li:first-child { border-top: none; }
 .compare-stats .pos { color: #2e8b6e; font-weight: 600; }
 .compare-stats .neg { color: #c0392b; font-weight: 600; }
+
+/* Asset breakdown — single horizontal bar split into public /
+   private / cash segments, with a tiny dot legend below. */
+.compare-assets { margin-top: 10px; }
+.compare-assets-h { margin-bottom: 4px; }
+.compare-asset-bar {
+    display: flex; height: 8px; border-radius: 4px;
+    overflow: hidden; background: #ddd;
+}
+.compare-asset-seg {
+    height: 100%;
+}
+.compare-asset-public  { background: #5ad1c7; }
+.compare-asset-private { background: #a37fdc; }
+.compare-asset-cash    { background: #6ec1e4; }
+.compare-asset-legend {
+    display: flex; flex-wrap: wrap; gap: 8px;
+    margin-top: 4px; font-size: 11px;
+}
+.compare-asset-legend-item { display: inline-flex; align-items: center; gap: 4px; }
+.compare-asset-dot {
+    width: 8px; height: 8px; border-radius: 2px;
+    display: inline-block;
+}
+
+/* Bio + overview text under each compare card. The biography is
+   line-clamped to 3 lines until expanded — Bloomberg bios run
+   long enough to push everything else off-screen otherwise. */
+.compare-bio { margin-top: 12px; }
+.compare-overview {
+    font-size: 12px;
+    line-height: 1.45;
+    color: #333;
+    margin: 0 0 6px;
+    font-style: italic;
+}
+.compare-bio-text {
+    font-size: 12px;
+    line-height: 1.5;
+    color: #333;
+    margin: 0;
+    /* line-clamp keeps the card compact until the user opts in */
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+.compare-bio-text.expanded {
+    -webkit-line-clamp: unset;
+    overflow: visible;
+}
+.compare-bio-toggle {
+    background: none; border: none; padding: 0;
+    color: #6c5ce7; cursor: pointer;
+    font-size: 11px; margin-top: 4px;
+}
+.compare-bio-toggle:hover { text-decoration: underline; }
+
 .compare-hints {
     font-size: 12px;
     margin: 8px 0 14px;

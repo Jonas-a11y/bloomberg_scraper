@@ -261,7 +261,52 @@ def _build_warmup_specs() -> list[tuple[str, dict, Callable]]:
             )
             for n in (30, 100, 250, 500)
         ],
+        # Public-market deep-dive: the country / industry buckets the
+        # user is most likely to click. Yahoo Screener is slow (5-10s
+        # cold), so a daily warm means the deep-dive panel never blocks
+        # on first open. The full coverage is opt-in via the
+        # /api/scraper/insights-cache/warm endpoint.
+        *_market_warmup_specs(),
     ]
+
+
+def _market_warmup_specs():
+    """Build (endpoint, params, fn) tuples for the public-market
+    endpoints. Pulled out into a helper because the country/industry
+    list is long enough to be its own thing.
+
+    We import locally to avoid a circular import at module-load time
+    (market.py → insights_cache via the wrapped endpoints)."""
+    from app.routes import market as mk
+
+    # The 12 countries with the deepest billionaire coverage in our
+    # dataset — opening the deep-dive on any of these is the primary
+    # use case. Smaller countries fall back to on-demand caching.
+    COUNTRIES = [
+        "United States", "China", "Germany", "France", "United Kingdom",
+        "Japan", "India", "Switzerland", "Netherlands", "Canada",
+        "South Korea", "Taiwan",
+    ]
+    # Industries that appear most often in the billionaire dataset.
+    INDUSTRIES = [
+        "Technology", "Finance & Investments", "Healthcare", "Energy",
+        "Real Estate", "Fashion & Retail", "Food & Beverage",
+        "Manufacturing", "Automotive", "Media & Entertainment",
+    ]
+    out = []
+    for c in COUNTRIES:
+        out.append((
+            "/market/by-country",
+            {"country": c, "limit": 100},
+            lambda c=c: mk.market_by_country(country=c, limit=100),
+        ))
+    for ind in INDUSTRIES:
+        out.append((
+            "/market/by-industry",
+            {"industry": ind, "limit": 100},
+            lambda ind=ind: mk.market_by_industry(industry=ind, limit=100),
+        ))
+    return out
 
 
 def warm_all(force: bool = False):

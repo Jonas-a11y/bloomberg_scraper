@@ -598,6 +598,10 @@ function insightsMixin() {
         comparePairOpen: false,
         comparePairLoading: false,
         comparePair: null,         // { a, b, correlation, history, shared }
+        // Per-side biography expansion state. The biography is
+        // truncated by default (3 lines via line-clamp); a Read-more
+        // button toggles to the full paragraph.
+        comparePairBioOpen: { a: false, b: false },
 
         // ─── Country / Industry deep-dive side panel ─────────────────────
         deepDiveOpen: false,
@@ -1039,6 +1043,9 @@ function insightsMixin() {
             this.comparePairOpen = true;
             this.comparePairLoading = true;
             this.comparePair = null;
+            // Reset bio expansion when switching pair — opening a new
+            // pair shouldn't inherit the previous one's "expanded" state.
+            this.comparePairBioOpen = { a: false, b: false };
             try {
                 const days = this.insightsCorrelationDays || 365;
                 const url = `/api/insights/compare-pair?a=${personA.person_id}` +
@@ -1048,6 +1055,29 @@ function insightsMixin() {
                 this.comparePairLoading = false;
             }
             this.$nextTick(() => this.renderComparePairChart());
+        },
+
+        // Asset breakdown for the compare panel: returns sized
+        // segments (public/private/cash) for the small horizontal
+        // bar. Segments with zero value are omitted so the bar
+        // doesn't have invisible flex children.
+        compareAssetSegments(snap) {
+            if (!snap) return [];
+            const total = (snap.public_assets_total || 0)
+                        + (snap.private_assets_total || 0)
+                        + (snap.cash_assets_total || 0);
+            if (!total) return [];
+            const segs = [
+                { label: 'Public', cls: 'public',
+                  value: snap.public_assets_total || 0 },
+                { label: 'Private', cls: 'private',
+                  value: snap.private_assets_total || 0 },
+                { label: 'Cash', cls: 'cash',
+                  value: snap.cash_assets_total || 0 },
+            ];
+            return segs
+                .filter(s => s.value > 0)
+                .map(s => ({ ...s, share: s.value / total }));
         },
 
         closeComparePair() {

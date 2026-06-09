@@ -1246,7 +1246,8 @@ def _compare_pair_compute(a: int, b: int, days: int):
         p = main.execute(
             """
             SELECT p.person_id, p.common_name AS name, p.full_name,
-                   p.citizenship, p.industry, p.age, p.gender
+                   p.citizenship, p.industry, p.age, p.birth_year,
+                   p.gender, p.biography, p.overview
             FROM persons p
             WHERE p.person_id = ?
             """,
@@ -1257,14 +1258,40 @@ def _compare_pair_compute(a: int, b: int, days: int):
         snap = main.execute(
             """
             SELECT s.scraped_at, s.rank, s.net_worth_usd,
-                   s.last_change_usd, s.ytd_change_usd
+                   s.last_change_usd, s.ytd_change_usd,
+                   s.last_change_pct, s.ytd_change_pct,
+                   s.public_assets_total, s.private_assets_total,
+                   s.cash_assets_total
             FROM snapshots s
             WHERE s.person_id = ?
             ORDER BY s.scraped_at DESC LIMIT 1
             """,
             (pid,),
         ).fetchone()
-        return {**dict(p), "snapshot": dict(snap) if snap else None}
+        # All-time peak — gives the user a "where is this person in
+        # their own arc?" anchor point alongside the current rank.
+        peak = main.execute(
+            """
+            SELECT MAX(net_worth_usd) AS peak_usd,
+                   (SELECT date FROM wealth_history wh2
+                    WHERE wh2.person_id = ?
+                    ORDER BY net_worth_usd DESC LIMIT 1) AS peak_date
+            FROM wealth_history WHERE person_id = ?
+            """,
+            (pid, pid),
+        ).fetchone()
+        # First time on the list (earliest wealth_history row)
+        first_seen = main.execute(
+            "SELECT MIN(date) AS first_date FROM wealth_history WHERE person_id = ?",
+            (pid,),
+        ).fetchone()
+        return {
+            **dict(p),
+            "snapshot": dict(snap) if snap else None,
+            "peak_usd": peak["peak_usd"] if peak else None,
+            "peak_date": peak["peak_date"] if peak else None,
+            "first_seen_date": first_seen["first_date"] if first_seen else None,
+        }
 
     A = _person_stats(a)
     B = _person_stats(b)

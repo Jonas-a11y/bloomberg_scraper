@@ -488,12 +488,24 @@ def _wikidata_companies(country_qid=None, industry_qid=None, limit=25):
 def market_by_country(country: str, limit: int = 25):
     """Top public companies headquartered in `country`. Yahoo Screener
     primary source; Wikidata used as a fallback only when Yahoo returned
-    nothing (small markets like Liechtenstein)."""
-    cache_key = ("by-country", country, limit)
-    hit = _cached(cache_key)
-    if hit is not None:
-        return hit
+    nothing (small markets like Liechtenstein).
 
+    Cached on disk via `insights_cache` so the answer survives a
+    server restart — Yahoo Screener can take 5-10 seconds on a cold
+    request, and we don't want every fresh process to pay that cost
+    again. Stale entries (past TTL) are SERVED IMMEDIATELY and
+    refreshed in the background; the user never blocks on a cold
+    compute after the first one."""
+    from app import insights_cache
+    payload, _state, _age = insights_cache.cached_or_compute(
+        "/market/by-country",
+        {"country": country, "limit": limit},
+        lambda: _market_by_country_compute(country, limit),
+    )
+    return payload
+
+
+def _market_by_country_compute(country: str, limit: int):
     region = _yf_region(country)
     qid = _country_qid(country)
     # Pull a generous oversample. For non-US countries, only a small
@@ -591,7 +603,6 @@ def market_by_country(country: str, limit: int = 25):
         "sources": sources,
         "fetched_at": datetime.now().isoformat(timespec="seconds"),
     }
-    _cache_put(cache_key, payload)
     return payload
 
 
@@ -599,11 +610,22 @@ def market_by_country(country: str, limit: int = 25):
 def market_by_industry(industry: str, limit: int = 25):
     """Top public companies in `industry` worldwide, by market cap.
     Yahoo primary, Wikidata fallback for industries Yahoo's GICS sector
-    map doesn't cover well."""
-    cache_key = ("by-industry", industry, limit)
-    hit = _cached(cache_key)
-    if hit is not None:
-        return hit
+    map doesn't cover well.
+
+    Cached on disk via `insights_cache` for the same reason as
+    by-country — paginated screener queries take seconds and we'd
+    rather serve stale data while refreshing in the background than
+    block the user every time."""
+    from app import insights_cache
+    payload, _state, _age = insights_cache.cached_or_compute(
+        "/market/by-industry",
+        {"industry": industry, "limit": limit},
+        lambda: _market_by_industry_compute(industry, limit),
+    )
+    return payload
+
+
+def _market_by_industry_compute(industry: str, limit: int):
 
     sector = INDUSTRY_TO_YF_SECTOR.get(industry, industry)
     qid = INDUSTRY_TO_WIKIDATA_QID.get(industry)
@@ -725,5 +747,4 @@ def market_by_industry(industry: str, limit: int = 25):
         "sources": sources,
         "fetched_at": datetime.now().isoformat(timespec="seconds"),
     }
-    _cache_put(cache_key, payload)
     return payload

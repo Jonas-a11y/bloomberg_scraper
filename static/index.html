@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Bloomberg Scraper</title>
-    <link rel="stylesheet" href="/style.css?v=54">
+    <link rel="stylesheet" href="/style.css?v=55">
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
     <script src="https://cdn.jsdelivr.net/npm/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
@@ -1168,7 +1168,62 @@
                                             <span :class="comparePair[key].snapshot?.last_change_usd >= 0 ? 'pos' : 'neg'"
                                                   x-text="comparePair[key].snapshot ? formatChange(comparePair[key].snapshot.last_change_usd) : '—'"></span>
                                         </li>
+                                        <!-- All-time peak: where the person sits in their own arc -->
+                                        <li x-show="comparePair[key].peak_usd">
+                                            <span class="muted small">All-time peak</span>
+                                            <span>
+                                                <span x-text="formatWealth(comparePair[key].peak_usd)"></span>
+                                                <span class="muted small" x-show="comparePair[key].peak_date"
+                                                      x-text="' · ' + comparePair[key].peak_date.slice(0,7)"></span>
+                                            </span>
+                                        </li>
+                                        <!-- First time the person showed up in our history -->
+                                        <li x-show="comparePair[key].first_seen_date">
+                                            <span class="muted small">First seen</span>
+                                            <span x-text="comparePair[key].first_seen_date?.slice(0,7) || '—'"></span>
+                                        </li>
                                     </ul>
+                                    <!-- Asset breakdown bar — public / private / cash split.
+                                         Hidden when the snapshot doesn't carry the totals (some
+                                         dropped-out billionaires). -->
+                                    <div class="compare-assets"
+                                         x-show="comparePair[key].snapshot?.public_assets_total
+                                              || comparePair[key].snapshot?.private_assets_total
+                                              || comparePair[key].snapshot?.cash_assets_total">
+                                        <div class="muted small compare-assets-h">Assets</div>
+                                        <div class="compare-asset-bar">
+                                            <template x-for="seg in compareAssetSegments(comparePair[key].snapshot)" :key="seg.label">
+                                                <div class="compare-asset-seg" :class="'compare-asset-' + seg.cls"
+                                                     :style="'flex:' + seg.share"
+                                                     :title="seg.label + ': ' + formatWealth(seg.value) + ' (' + Math.round(seg.share*100) + '%)'"></div>
+                                            </template>
+                                        </div>
+                                        <div class="compare-asset-legend muted small">
+                                            <template x-for="seg in compareAssetSegments(comparePair[key].snapshot)" :key="seg.label">
+                                                <span class="compare-asset-legend-item">
+                                                    <span class="compare-asset-dot" :class="'compare-asset-' + seg.cls"></span>
+                                                    <span x-text="seg.label"></span>
+                                                    <span x-text="' ' + Math.round(seg.share*100) + '%'"></span>
+                                                </span>
+                                            </template>
+                                        </div>
+                                    </div>
+                                    <!-- Bloomberg's short bio + overview. The biography is one
+                                         paragraph of how the person made their money; overview
+                                         is a one-liner. We render bio truncated to ~3 lines
+                                         with a "more" toggle. -->
+                                    <div class="compare-bio" x-show="comparePair[key].overview || comparePair[key].biography">
+                                        <p class="compare-overview" x-show="comparePair[key].overview"
+                                           x-text="comparePair[key].overview"></p>
+                                        <p class="compare-bio-text" x-show="comparePair[key].biography"
+                                           :class="{ expanded: comparePairBioOpen[key] }">
+                                            <span x-text="comparePair[key].biography"></span>
+                                        </p>
+                                        <button class="compare-bio-toggle"
+                                                x-show="comparePair[key].biography && comparePair[key].biography.length > 240"
+                                                @click="comparePairBioOpen[key] = !comparePairBioOpen[key]"
+                                                x-text="comparePairBioOpen[key] ? 'Show less' : 'Read more'"></button>
+                                    </div>
                                 </div>
                             </template>
                         </div>
@@ -2409,7 +2464,7 @@
     <script src="/js/tabs/export.js?v=1"></script>
     <script src="/js/tabs/panel.js?v=5"></script>
     <script src="/js/tabs/profile.js?v=25"></script>
-    <script src="/js/tabs/insights.js?v=14"></script>
+    <script src="/js/tabs/insights.js?v=15"></script>
     <script src="/app.js?v=36"></script>
 </body>
 </html>
