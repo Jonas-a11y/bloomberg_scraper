@@ -336,21 +336,49 @@ def _yf_screen(region=None, sector=None, limit=25, min_market_cap=1_000_000_000)
     quotes = []
     remaining = limit
     offset = 0
+    # Track whether the screener completed naturally (last page was
+    # short / empty) or bailed on an error. We only treat the result
+    # as complete on a clean exit; otherwise the caller should treat
+    # `truncated=True` as "don't cache this — Yahoo throttled us mid-run".
+    truncated = False
     while remaining > 0:
         page_size = min(remaining, PAGE)
-        try:
-            result = yf.screen(
-                query,
-                sortField="intradaymarketcap",
-                sortAsc=False,
-                size=page_size,
-                offset=offset,
-            )
-        except Exception as e:
-            logger.warning(f"yfinance screener failed at offset={offset}: {e}")
+        # Retry-with-backoff on rate-limit. Yahoo's "Too Many Requests"
+        # is transient; a few short pauses usually unsticks us. We
+        # cap retries so a sustained throttle still bubbles up
+        # truncated=True instead of hanging the caller forever.
+        result = None
+        for attempt in range(3):
+            try:
+                result = yf.screen(
+                    query,
+                    sortField="intradaymarketcap",
+                    sortAsc=False,
+                    size=page_size,
+                    offset=offset,
+                )
+                break
+            except Exception as e:
+                msg = str(e).lower()
+                rate_limited = "too many requests" in msg or "429" in msg
+                if rate_limited and attempt < 2:
+                    delay = (attempt + 1) * 5  # 5s, 10s
+                    logger.info(
+                        f"yfinance screener rate-limited at offset={offset}, "
+                        f"retry in {delay}s (attempt {attempt+1}/3)"
+                    )
+                    time.sleep(delay)
+                    continue
+                logger.warning(
+                    f"yfinance screener failed at offset={offset}: {e}"
+                )
+                break
+        if result is None:
+            truncated = True
             break
         page_quotes = result.get("quotes") if isinstance(result, dict) else []
         if not page_quotes:
+            # Empty page is a natural EOF (no truncation).
             break
         quotes.extend(page_quotes)
         if len(page_quotes) < page_size:
@@ -358,7 +386,7 @@ def _yf_screen(region=None, sector=None, limit=25, min_market_cap=1_000_000_000)
         remaining -= page_size
         offset += page_size
     if not quotes:
-        return []
+        return [], truncated
 
     # When we asked for a specific region, filter out depository
     # receipts and other non-primary listings. Yahoo's `market` field
@@ -404,7 +432,7 @@ def _yf_screen(region=None, sector=None, limit=25, min_market_cap=1_000_000_000)
             "source": "yahoo",
         })
     out.sort(key=lambda x: -(x.get("market_cap_usd") or 0))
-    return out
+    return out, truncated
 
 
 def _wikidata_companies(country_qid=None, industry_qid=None, limit=25):
@@ -515,11 +543,22 @@ def _market_by_country_compute(country: str, limit: int):
     # surface; for the US case (where almost all results are real US
     # companies) we cap at 250 to keep things fast.
     if region == "us":
-        yahoo = _yf_screen(region=region, limit=250)
+        yahoo, truncated = _yf_screen(region=region, limit=250)
     elif region:
-        yahoo = _yf_screen(region=region, limit=2000, min_market_cap=100_000_000)
+        yahoo, truncated = _yf_screen(
+            region=region, limit=2000, min_market_cap=100_000_000,
+        )
     else:
-        yahoo = []
+        yahoo, truncated = [], False
+    # If Yahoo throttled us partway through, fail loudly so the
+    # cache layer doesn't memoise a partial result. The user gets a
+    # 500 once; the next request retries; meanwhile the cache stays
+    # empty for this slot.
+    if truncated and len(yahoo) < 5:
+        raise RuntimeError(
+            f"Yahoo screener truncated for region={region}: "
+            f"only {len(yahoo)} rows before bailing. Not caching."
+        )
 
     # Pass 1 (cheap): drop the obvious foreign mirrors via
     # `financial_currency`. Real local companies report financials in
@@ -640,12 +679,29 @@ def _market_by_industry_compute(industry: str, limit: int):
     yahoo_combined = []
     if sector:
         per_region = max(20, limit // 2)
+        # Track aggregate truncation across all regions. A single
+        # truncated region for an industry sweep is OK (the others
+        # cover for it), but if MOST regions truncated we have a
+        # dataset that misrepresents the global picture and shouldn't
+        # be cached.
+        truncated_regions = 0
+        total_regions = 0
         for region_code in ("us", "gb", "de", "fr", "jp", "cn", "in",
                             "ch", "nl", "ca", "kr", "tw"):
-            rows = _yf_screen(region=region_code, sector=sector, limit=per_region)
+            total_regions += 1
+            rows, region_truncated = _yf_screen(
+                region=region_code, sector=sector, limit=per_region,
+            )
+            if region_truncated and len(rows) < 3:
+                truncated_regions += 1
             for r in rows:
                 r["_screen_region"] = region_code
             yahoo_combined.extend(rows)
+        if truncated_regions >= total_regions // 2:
+            raise RuntimeError(
+                f"Yahoo screener truncated for {truncated_regions}/{total_regions} "
+                f"regions on industry={sector}. Not caching."
+            )
 
         # Cheap pass: dedupe by ticker — the same listing sometimes
         # surfaces in two region screens.

@@ -596,7 +596,6 @@ function insightsMixin() {
         // Charts/data
         insightsTopOverTime: null,
         insightsCohortSurvival: null,
-        insightsSourceGap: null,
         insightsInequality: null,
         insightsCountOverTime: null,
         insightsCorrelation: null,
@@ -646,7 +645,6 @@ function insightsMixin() {
                 this.loadInsightsCount(),
                 this.loadInsightsInequality(),
                 this.loadInsightsCohort(),
-                this.loadInsightsSourceGap(),
                 this.loadInsightsCorrelation(),
                 this.loadInsightsGeoMigration(),
                 this.loadAnalytics(),
@@ -699,12 +697,6 @@ function insightsMixin() {
             });
             this.insightsCohortSurvival = await fetch(
                 `/api/insights/cohort-survival?${params}`
-            ).then(r => r.json());
-        },
-
-        async loadInsightsSourceGap() {
-            this.insightsSourceGap = await fetch(
-                '/api/insights/source-gap?limit=20'
             ).then(r => r.json());
         },
 

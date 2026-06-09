@@ -755,28 +755,6 @@
                 </div>
             </div>
 
-            <!-- Source gap -->
-            <div class="insights-card">
-                <div class="insights-card-header">
-                    <h3>Forbes vs Bloomberg disagreements<span class="help-icon" title="Per-person comparison: Forbes's annual estimate vs Bloomberg's daily mark-to-market for the same person at year-end. Sorted by absolute % gap. Big gaps usually mean private-asset valuation differences (Forbes is conservative on private equity) or stock moves Forbes hadn't yet baked in.">?</span></h3>
-                    <span class="muted small" x-text="insightsSourceGap ? insightsSourceGap.year + ' · ' + insightsSourceGap.total_compared + ' compared' : ''"></span>
-                </div>
-                <ul class="source-gap-list" x-show="insightsSourceGap?.pairs?.length">
-                    <template x-for="p in (insightsSourceGap?.pairs || []).slice(0, 10)" :key="p.person_id">
-                        <li class="source-gap-row">
-                            <span class="metric-link" @click="p.person_id && openProfile(p.person_id)" x-text="p.name"></span>
-                            <span class="source-gap-vals">
-                                <span class="muted small">F: $<span x-text="(p.forbes_worth/1e9).toFixed(0)"></span>B</span>
-                                <span class="muted small">B: $<span x-text="(p.bloomberg_worth/1e9).toFixed(0)"></span>B</span>
-                                <span class="source-gap-pct"
-                                      :class="p.gap_pct >= 0 ? 'positive' : 'negative'"
-                                      x-text="(p.gap_pct >= 0 ? '+' : '') + p.gap_pct.toFixed(0) + '%'"></span>
-                            </span>
-                        </li>
-                    </template>
-                </ul>
-            </div>
-
             <!-- Correlation heatmap -->
             <div class="insights-card insights-card-wide">
                 <div class="insights-card-header">
@@ -2481,7 +2459,7 @@
     <script src="/js/tabs/export.js?v=1"></script>
     <script src="/js/tabs/panel.js?v=5"></script>
     <script src="/js/tabs/profile.js?v=26"></script>
-    <script src="/js/tabs/insights.js?v=17"></script>
+    <script src="/js/tabs/insights.js?v=18"></script>
     <script src="/app.js?v=36"></script>
 </body>
 </html>

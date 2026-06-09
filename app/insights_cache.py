@@ -208,46 +208,44 @@ def _build_warmup_specs() -> list[tuple[str, dict, Callable]]:
     from app.routes import insights as ix
 
     year = datetime.now().year
+    # IMPORTANT: every fn must call the `_*_compute` helper, not the
+    # wrapped public endpoint. The public endpoints go through
+    # cached_or_compute themselves; calling them from within
+    # warm_all → cached_or_compute → fn() recurses on the same key
+    # and a partial inner result can overwrite the freshly-computed
+    # outer one.
     return [
         # Demographics + leaderboards used on Insights tab open
         (
             "/insights/inequality",
             {"year_from": 2001, "year_to": year},
-            lambda: ix.inequality(year_from=2001, year_to=year),
+            lambda: ix._inequality_compute(2001, year, None, None),
         ),
         (
             "/insights/count-over-time",
             {"year_from": 2001, "year_to": year, "by": "country"},
-            lambda: ix.count_over_time(
-                year_from=2001, year_to=year, by="country",
-            ),
+            lambda: ix._count_over_time_compute(2001, year, "country"),
         ),
         (
             "/insights/top-over-time",
             {"n": 12, "year_from": 2001, "year_to": year},
-            lambda: ix.top_over_time(n=12, year_from=2001, year_to=year),
+            lambda: ix._top_over_time_compute(12, 2001, year, None, None),
         ),
         (
             "/insights/top-over-time-series",
             {"n": 12, "year_from": 2001, "year_to": year},
-            lambda: ix.top_over_time_series(
-                n=12, year_from=2001, year_to=year,
-            ),
+            lambda: ix._top_over_time_series_compute(12, 2001, year, None, None),
         ),
-        (
-            "/insights/source-gap",
-            {"limit": 20},
-            lambda: ix.source_gap(limit=20),
-        ),
+        # source-gap intentionally omitted — UI no longer surfaces it
         (
             "/insights/cohort-survival",
             {"year": 2001, "top": 100},
-            lambda: ix.cohort_survival(year=2001, top=100),
+            lambda: ix._cohort_survival_compute(2001, 100),
         ),
         (
             "/insights/geo-migration",
             None,
-            lambda: ix.geo_migration(),
+            lambda: ix._geo_migration_compute(),
         ),
         # Wealth correlation at the four UI presets — these are the
         # slowest endpoints, biggest win from caching.
@@ -255,8 +253,8 @@ def _build_warmup_specs() -> list[tuple[str, dict, Callable]]:
             (
                 "/insights/wealth-correlation",
                 {"n": n, "days": 365, "threshold": 0.7},
-                lambda n=n: ix.wealth_correlation(
-                    n=n, days=365, threshold=0.7,
+                lambda n=n: ix._wealth_correlation_compute(
+                    n, 365, 0.7, None,
                 ),
             )
             for n in (30, 100, 250, 500)
@@ -276,7 +274,12 @@ def _market_warmup_specs():
     list is long enough to be its own thing.
 
     We import locally to avoid a circular import at module-load time
-    (market.py → insights_cache via the wrapped endpoints)."""
+    (market.py → insights_cache via the wrapped endpoints). Crucially
+    we call the `_compute` helpers, NOT the cached public endpoints —
+    otherwise the warmup invokes cached_or_compute → which calls the
+    spec's fn → which calls cached_or_compute again on the same key,
+    and a partial result from the inner call gets written back over
+    a freshly-computed full result."""
     from app.routes import market as mk
 
     # The 12 countries with the deepest billionaire coverage in our
@@ -298,13 +301,17 @@ def _market_warmup_specs():
         out.append((
             "/market/by-country",
             {"country": c, "limit": 100},
-            lambda c=c: mk.market_by_country(country=c, limit=100),
+            # _market_by_country_compute, NOT market_by_country: the
+            # public endpoint goes through cached_or_compute itself,
+            # which would short-circuit to whatever's currently
+            # cached (potentially partial) instead of recomputing.
+            lambda c=c: mk._market_by_country_compute(c, 100),
         ))
     for ind in INDUSTRIES:
         out.append((
             "/market/by-industry",
             {"industry": ind, "limit": 100},
-            lambda ind=ind: mk.market_by_industry(industry=ind, limit=100),
+            lambda ind=ind: mk._market_by_industry_compute(ind, 100),
         ))
     return out
 
@@ -316,15 +323,25 @@ def warm_all(force: bool = False):
     worker. We expose two scheduled callers: startup (so a fresh
     process has answers immediately) and post-scrape (so the new
     snapshot's worth shows up in derived charts).
+
+    Pacing: between specs that hit Yahoo (any /market/* entry) we
+    sleep briefly to stay under Yahoo's screener rate limit.
+    Without this, warming all 22 market entries back-to-back trips
+    'Too Many Requests' partway through and half the cache stays
+    poisoned with empty results.
     """
     specs = _build_warmup_specs()
     refreshed = 0
+    last_was_market = False
     for endpoint, params, compute in specs:
         if not force:
             cached = get_cached(endpoint, params)
             if cached and (time.time() - float(cached[1])) < _DEFAULT_TTL_SEC:
                 # Already fresh; skip
                 continue
+        is_market = endpoint.startswith("/market/")
+        if is_market and last_was_market:
+            time.sleep(2)  # polite pacing between Yahoo-bound specs
         try:
             started = time.time()
             payload = compute()
@@ -339,6 +356,7 @@ def warm_all(force: bool = False):
             logger.exception(
                 f"insights_cache: warm failed for {_key(endpoint, params)}"
             )
+        last_was_market = is_market
     logger.info(f"insights_cache.warm_all: refreshed {refreshed}/{len(specs)}")
     return refreshed
 
