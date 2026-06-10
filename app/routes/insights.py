@@ -1511,7 +1511,11 @@ def _geo_migration_compute():
             key = (birth_c, res_c)
             flows[key]["count"] += 1
             flows[key]["total_wealth_usd"] += wealth
-            flows[key]["people"].append({"name": name, "wealth": wealth})
+            flows[key]["people"].append({
+                "person_id": r["person_id"],
+                "name": name,
+                "wealth": wealth,
+            })
         for c in (birth_c, res_c):
             if c:
                 nodes.setdefault(c, {"persons": 0, "wealth": 0})
@@ -1525,9 +1529,11 @@ def _geo_migration_compute():
             "count": v["count"],
             "total_wealth_usd": v["total_wealth_usd"],
             "is_self_flow": b == r,
+            # Bumped 5 → 25 so the click-through drill-down can show
+            # the whole list. Frontend slices by display preference.
             "sample_people": sorted(
                 v["people"], key=lambda p: -p["wealth"]
-            )[:5],
+            )[:25],
         })
     flow_list.sort(key=lambda f: -f["total_wealth_usd"])
 

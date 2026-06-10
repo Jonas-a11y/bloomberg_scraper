@@ -600,6 +600,8 @@ function insightsMixin() {
         insightsCountOverTime: null,
         insightsCorrelation: null,
         insightsGeoMigration: null,
+        // Which cross-border-flow row is expanded (null = all collapsed).
+        migrationOpenIdx: null,
         // Reactive tick used to drive Alpine re-renders of the year
         // label, slider position, and industry legend. The renderer's
         // onTick callback bumps this every ~100ms while animating.

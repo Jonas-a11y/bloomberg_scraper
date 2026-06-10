@@ -307,13 +307,14 @@ def _enrich_with_sector(rows, max_workers=30):
     return rows
 
 
-def _collapse_share_classes(rows, cap_tolerance=0.25):
+def _collapse_share_classes(rows, cap_tolerance=0.85):
     """Merge same-company share-class duplicates.
 
     Yahoo's screener returns voting/non-voting share classes as
     separate rows even though they're the same underlying company:
-        GOOGL ($4442B) + GOOG ($4418B)  → both "Alphabet Inc."
-        BRK-A ($1049B) + BRK-B ($1052B) → both "Berkshire Hathaway Inc."
+        GOOGL ($4442B) + GOOG ($4418B)        → both "Alphabet Inc." (~0.5% apart)
+        BRK-A ($1049B) + BRK-B ($1052B)       → both "Berkshire Hathaway Inc." (~0.3%)
+        005930.KS ($1307B) + 005935.KS ($831B) → both "Samsung Electronics Co., Ltd." (~63%)
     The treemap and sector breakdown then double-count those companies.
 
     Rule: rows whose `name` matches exactly (after upper-casing and
@@ -322,10 +323,11 @@ def _collapse_share_classes(rows, cap_tolerance=0.25):
     Keep the row with the largest market cap (typically the more
     liquid voting class) and discard the rest.
 
-    The cap-tolerance gate is what stops us from collapsing things
-    like Wells Fargo common ($251B) with its preferred series
-    WFC-PC ($115B) — same registered name, but the preferred is a
-    legitimately separate security with its own cap.
+    Tolerance is generous (85%) by design — Samsung's preferred
+    trades at a substantial discount to the common, but they're
+    still the same underlying company. Two genuinely separate
+    companies almost never share an exact registered longName,
+    so a permissive cap rule is the right trade-off.
 
     Levenshtein-based fuzzy matching was considered and rejected:
     real share-class duplicates have IDENTICAL names (distance 0),

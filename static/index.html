@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Bloomberg Scraper</title>
-    <link rel="stylesheet" href="/style.css?v=56">
+    <link rel="stylesheet" href="/style.css?v=58">
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
     <script src="https://cdn.jsdelivr.net/npm/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
@@ -803,15 +803,39 @@
                 <div class="migration-layout">
                     <div class="migration-col">
                         <h4>Top cross-border flows</h4>
-                        <ul>
-                            <template x-for="f in topMigrationFlows(10)" :key="f.birth + f.residence">
-                                <li>
-                                    <span class="migration-route">
-                                        <strong x-text="f.birth"></strong>
-                                        <span class="muted">→</span>
-                                        <strong x-text="f.residence"></strong>
-                                    </span>
-                                    <span class="muted small" x-text="f.count + ' · $' + (f.total_wealth_usd/1e9).toFixed(0) + 'B'"></span>
+                        <ul class="migration-flows">
+                            <template x-for="(f, idx) in topMigrationFlows(10)" :key="f.birth + f.residence">
+                                <li class="migration-flow-row" :class="{ expanded: migrationOpenIdx === idx }">
+                                    <button class="migration-flow-summary"
+                                            @click="migrationOpenIdx = (migrationOpenIdx === idx ? null : idx)"
+                                            :aria-expanded="migrationOpenIdx === idx">
+                                        <span class="migration-route">
+                                            <strong x-text="f.birth"></strong>
+                                            <span class="muted">→</span>
+                                            <strong x-text="f.residence"></strong>
+                                        </span>
+                                        <span class="muted small" x-text="f.count + ' · $' + (f.total_wealth_usd/1e9).toFixed(0) + 'B'"></span>
+                                        <span class="migration-flow-chev" aria-hidden="true">▾</span>
+                                    </button>
+                                    <ul class="migration-flow-people" x-show="migrationOpenIdx === idx" x-transition>
+                                        <template x-for="p in (f.sample_people || [])" :key="p.person_id || p.name">
+                                            <li>
+                                                <template x-if="p.person_id">
+                                                    <a class="metric-link"
+                                                       @click.prevent="openProfile(p.person_id)"
+                                                       href="#" x-text="p.name"></a>
+                                                </template>
+                                                <template x-if="!p.person_id">
+                                                    <span x-text="p.name"></span>
+                                                </template>
+                                                <span class="muted small"
+                                                      x-text="'$' + (p.wealth/1e9).toFixed(1) + 'B'"></span>
+                                            </li>
+                                        </template>
+                                        <li class="muted small migration-flow-foot"
+                                            x-show="(f.sample_people || []).length < f.count"
+                                            x-text="'… and ' + (f.count - (f.sample_people || []).length) + ' more not shown'"></li>
+                                    </ul>
                                 </li>
                             </template>
                         </ul>
@@ -2478,7 +2502,7 @@
     <script src="/js/tabs/export.js?v=1"></script>
     <script src="/js/tabs/panel.js?v=5"></script>
     <script src="/js/tabs/profile.js?v=27"></script>
-    <script src="/js/tabs/insights.js?v=18"></script>
+    <script src="/js/tabs/insights.js?v=19"></script>
     <script src="/app.js?v=36"></script>
 </body>
 </html>

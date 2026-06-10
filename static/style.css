@@ -1292,6 +1292,47 @@ h3 { font-size: 15px; margin-bottom: 12px; }
     background: #6c5ce7; color: white; padding: 1px 8px;
     border-radius: 8px;
 }
+
+/* Cross-border-flow rows are click-to-expand. The summary is a
+   button that flips a chevron; the people list slides in below. */
+.migration-flows { padding: 0; margin: 0; list-style: none; }
+.migration-col .migration-flow-row {
+    /* Override .migration-col li flex layout — we want the summary
+       button on top and the people list stacked below it. */
+    display: block;
+    padding: 0;
+    border-bottom: 1px solid #f0f0f0;
+}
+.migration-flow-summary {
+    display: flex; justify-content: space-between; align-items: center;
+    width: 100%;
+    padding: 6px 0;
+    background: none; border: none; text-align: left;
+    cursor: pointer;
+    font-size: 13px;
+    color: inherit;
+    gap: 8px;
+}
+.migration-flow-summary:hover { background: #f7f6fb; }
+.migration-flow-chev {
+    color: #888; font-size: 11px;
+    transition: transform 0.15s ease;
+}
+.migration-flow-row.expanded .migration-flow-chev {
+    transform: rotate(-180deg);
+}
+.migration-flow-people {
+    list-style: none; padding: 0 0 8px 16px; margin: 0;
+}
+.migration-flow-people li {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 3px 0;
+    font-size: 12px;
+    border-bottom: none;
+}
+.migration-flow-foot {
+    font-style: italic; padding-top: 4px !important;
+}
 @media (max-width: 768px) {
     .migration-layout { grid-template-columns: 1fr; }
 }
