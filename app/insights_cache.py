@@ -205,47 +205,48 @@ def _build_warmup_specs() -> list[tuple[str, dict, Callable]]:
     refresh after every scrape. Picked to match what the UI fetches on
     Insights tab load + the deep-dive panel's defaults."""
     from datetime import datetime
-    from app.routes import insights as ix
+    from app import insights as ix
 
     year = datetime.now().year
-    # IMPORTANT: every fn must call the `_*_compute` helper, not the
-    # wrapped public endpoint. The public endpoints go through
-    # cached_or_compute themselves; calling them from within
-    # warm_all → cached_or_compute → fn() recurses on the same key
-    # and a partial inner result can overwrite the freshly-computed
+    # Warmup specs call the compute helpers in app.insights directly
+    # (NOT the wrapped routes in app.routes.insights). The route
+    # handlers go through cached_or_compute themselves; if a spec
+    # called the route handler, warm_all → cached_or_compute →
+    # spec.fn() → cached_or_compute would recurse on the same key
+    # and a partial inner result could overwrite the freshly-computed
     # outer one.
     return [
         # Demographics + leaderboards used on Insights tab open
         (
             "/insights/inequality",
             {"year_from": 2001, "year_to": year},
-            lambda: ix._inequality_compute(2001, year, None, None),
+            lambda: ix.inequality(2001, year, None, None),
         ),
         (
             "/insights/count-over-time",
             {"year_from": 2001, "year_to": year, "by": "country"},
-            lambda: ix._count_over_time_compute(2001, year, "country"),
+            lambda: ix.count_over_time(2001, year, "country"),
         ),
         (
             "/insights/top-over-time",
             {"n": 12, "year_from": 2001, "year_to": year},
-            lambda: ix._top_over_time_compute(12, 2001, year, None, None),
+            lambda: ix.top_over_time(12, 2001, year, None, None),
         ),
         (
             "/insights/top-over-time-series",
             {"n": 12, "year_from": 2001, "year_to": year},
-            lambda: ix._top_over_time_series_compute(12, 2001, year, None, None),
+            lambda: ix.top_over_time_series(12, 2001, year, None, None),
         ),
         # source-gap intentionally omitted — UI no longer surfaces it
         (
             "/insights/cohort-survival",
             {"year": 2001, "top": 100},
-            lambda: ix._cohort_survival_compute(2001, 100),
+            lambda: ix.cohort_survival(2001, 100),
         ),
         (
             "/insights/geo-migration",
             None,
-            lambda: ix._geo_migration_compute(),
+            lambda: ix.geo_migration(),
         ),
         # Wealth correlation at the four UI presets — these are the
         # slowest endpoints, biggest win from caching.
@@ -253,9 +254,7 @@ def _build_warmup_specs() -> list[tuple[str, dict, Callable]]:
             (
                 "/insights/wealth-correlation",
                 {"n": n, "days": 365, "threshold": 0.7},
-                lambda n=n: ix._wealth_correlation_compute(
-                    n, 365, 0.7, None,
-                ),
+                lambda n=n: ix.wealth_correlation(n, 365, 0.7, None),
             )
             for n in (30, 100, 250, 500)
         ],
@@ -275,12 +274,11 @@ def _market_warmup_specs():
 
     We import locally to avoid a circular import at module-load time
     (market.py → insights_cache via the wrapped endpoints). Crucially
-    we call the `_compute` helpers, NOT the cached public endpoints —
-    otherwise the warmup invokes cached_or_compute → which calls the
-    spec's fn → which calls cached_or_compute again on the same key,
-    and a partial result from the inner call gets written back over
-    a freshly-computed full result."""
-    from app.routes import market as mk
+    we call the compute helpers in ``app.market`` directly, NOT the
+    wrapped routes — otherwise the warmup invokes cached_or_compute
+    → spec.fn → cached_or_compute again on the same key, and a partial
+    inner result can overwrite the freshly-computed outer one."""
+    from app import market as mk
 
     # The 12 countries with the deepest billionaire coverage in our
     # dataset — opening the deep-dive on any of these is the primary
@@ -301,17 +299,13 @@ def _market_warmup_specs():
         out.append((
             "/market/by-country",
             {"country": c, "limit": 100},
-            # _market_by_country_compute, NOT market_by_country: the
-            # public endpoint goes through cached_or_compute itself,
-            # which would short-circuit to whatever's currently
-            # cached (potentially partial) instead of recomputing.
-            lambda c=c: mk._market_by_country_compute(c, 100),
+            lambda c=c: mk.market_by_country(c, 100),
         ))
     for ind in INDUSTRIES:
         out.append((
             "/market/by-industry",
             {"industry": ind, "limit": 100},
-            lambda ind=ind: mk._market_by_industry_compute(ind, 100),
+            lambda ind=ind: mk.market_by_industry(ind, 100),
         ))
     return out
 
