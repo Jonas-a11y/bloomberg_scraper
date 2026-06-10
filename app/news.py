@@ -9,6 +9,7 @@ genuinely interesting events instead of every passing mention. Earnings,
 lawsuits, deaths, divorces, IPOs, acquisitions all bump the score.
 """
 import logging
+import re
 import time
 from datetime import datetime, timedelta
 from urllib.parse import quote_plus
@@ -106,7 +107,8 @@ def _domain_of(url):
         return None
 
 
-def fetch_news_for_person(name, since_date=None, until_date=None, limit=50, timeout=20):
+def fetch_news_for_person(name, since_date=None, until_date=None, limit=50,
+                          timeout=20, related_terms=None):
     """Query GDELT for articles mentioning a person. Returns list of dicts.
 
     Each dict: {article_date, title, url, source, importance}.
@@ -114,7 +116,17 @@ def fetch_news_for_person(name, since_date=None, until_date=None, limit=50, time
 
     GDELT requires YYYYMMDDHHMMSS for startdatetime/enddatetime. If since_date
     is None we default to 30 days ago — the daily refresh window.
-    """
+
+    Relevance filter (`related_terms`):
+    GDELT's quoted-phrase query is an OR across the article body, sidebars,
+    and embedded recommendations — so unrelated stories occasionally come
+    back when the person's name appeared in a related-articles widget.
+    Notable real example: an article about a Pakistani rape case was
+    linked to Elon Musk because his name appeared in the page's
+    suggested-reading sidebar. To kill these false positives we drop
+    articles whose title and URL slug contain NONE of the per-person
+    related terms (last name + ticker / company / known-product names).
+    Pass `related_terms=None` to skip the filter (legacy behaviour)."""
     if not name:
         return []
     if since_date is None:
@@ -178,13 +190,39 @@ def fetch_news_for_person(name, since_date=None, until_date=None, limit=50, time
         return []
 
     articles = data.get("articles", [])
+    # Build a single regex for the relevance gate. We match
+    # word-bounded, case-insensitive in (title || URL slug).
+    if related_terms:
+        norm = []
+        for t in related_terms:
+            if not t:
+                continue
+            # Strip ticker noise like 'TSLA US Equity' → 'TSLA'
+            t = t.strip().split()[0].strip(".,").lower()
+            if len(t) >= 3:
+                norm.append(re.escape(t))
+        relevance_re = (
+            re.compile(r"\b(" + "|".join(norm) + r")\b", re.I)
+            if norm else None
+        )
+    else:
+        relevance_re = None
     out = []
+    dropped_off_topic = 0
     for art in articles:
         title = art.get("title")
         url = art.get("url")
         seendate = art.get("seendate")  # YYYYMMDDTHHMMSSZ
         if not title or not url or not seendate:
             continue
+        # Relevance gate — drop articles whose title and URL slug have
+        # zero overlap with the per-person related-terms set. Catches
+        # GDELT false-positives where the person was named in a
+        # related-articles sidebar, not the actual story.
+        if relevance_re is not None:
+            if not relevance_re.search(title) and not relevance_re.search(url):
+                dropped_off_topic += 1
+                continue
         try:
             article_date = (
                 f"{seendate[0:4]}-{seendate[4:6]}-{seendate[6:8]}"
@@ -202,4 +240,82 @@ def fetch_news_for_person(name, since_date=None, until_date=None, limit=50, time
             "source": source,
             "importance": score_importance(title, url),
         })
+    if dropped_off_topic:
+        logger.info(
+            f"GDELT relevance filter: dropped {dropped_off_topic} "
+            f"off-topic articles for {name!r}"
+        )
     return out
+
+
+def related_terms_for_person(person_id):
+    """Per-person token set for the GDELT relevance gate.
+
+    Returns a list of lower-cased, word-bounded tokens we expect to
+    see in a legitimate article's title or URL slug. Combines:
+      - the surname (high-recall — most articles name them)
+      - tickers from the latest snapshot's public_assets_json
+      - first significant word of each entry in private_assets_json
+        (SpaceX, Neuralink, Boring, …)
+
+    Falls back to an empty list if the person isn't in our DB or
+    doesn't have a snapshot — caller should treat empty as "no
+    filter applied" (legacy behaviour).
+    """
+    import json as _json
+    from app.database import get_db
+    conn = get_db()
+    try:
+        p = conn.execute(
+            "SELECT last_name, common_name FROM persons WHERE person_id = ?",
+            (person_id,),
+        ).fetchone()
+        if not p:
+            return []
+        snap = conn.execute(
+            "SELECT public_assets_json, private_assets_json FROM snapshots "
+            "WHERE person_id = ? ORDER BY scraped_at DESC LIMIT 1",
+            (person_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+
+    terms = set()
+    last = (p["last_name"] or "").strip()
+    if not last:
+        # Family entries ("Walton family") — fall back to first
+        # word of the common_name.
+        first_word = (p["common_name"] or "").split()[0:1]
+        last = first_word[0] if first_word else ""
+    if last and len(last) >= 3:
+        terms.add(last.lower())
+
+    if not snap:
+        return sorted(terms)
+
+    for blob in (snap["public_assets_json"], snap["private_assets_json"]):
+        if not blob:
+            continue
+        try:
+            rows = _json.loads(blob)
+        except (TypeError, ValueError):
+            continue
+        for r in rows:
+            tk = (r.get("ticker") or "").strip()
+            if tk:
+                # 'TSLA US Equity' → 'TSLA'
+                base = tk.split()[0].strip(".,")
+                if len(base) >= 3:
+                    terms.add(base.lower())
+            nm = (r.get("name") or "").strip()
+            if nm:
+                # First significant word: skip 'The', 'A' articles.
+                tokens = [
+                    re.sub(r"[^A-Za-z0-9]", "", t).lower()
+                    for t in nm.split()
+                ]
+                tokens = [t for t in tokens if len(t) >= 3
+                          and t not in ("the", "and", "for")]
+                if tokens:
+                    terms.add(tokens[0])
+    return sorted(terms)

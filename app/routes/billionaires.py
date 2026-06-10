@@ -619,7 +619,9 @@ def _maybe_kick_off_news_fetch(person_id, force=False):
             main.close()
             name = (person["full_name"] if person else None) or (person["common_name"] if person else None)
             if name:
-                recent = fetch_news_for_person(name, limit=20)
+                from app.news import related_terms_for_person
+                terms = related_terms_for_person(person_id)
+                recent = fetch_news_for_person(name, limit=20, related_terms=terms)
                 if recent:
                     conn = get_db()
                     now = datetime.now().isoformat()

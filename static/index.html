@@ -2233,6 +2233,25 @@
                         </template>
                         <p class="muted small" x-show="profile.liabilities_note"
                            x-text="profile.liabilities_note" style="margin-top: 8px;"></p>
+                        <!-- "Other" gap explainer: shown only when the
+                             disclosed totals don't sum to net worth.
+                             Bloomberg's net_worth_usd is their proprietary
+                             Index estimate; the per-asset list is what they
+                             choose to disclose; the gap is the modelled /
+                             unallocated remainder. -->
+                        <p class="muted small"
+                           x-show="profileAssetSegments(profile).some(s => s.label === 'Other')"
+                           style="margin-top: 6px;">
+                            <strong>Why does &quot;Other&quot; exist?</strong>
+                            Bloomberg's headline net worth is their proprietary
+                            Billionaires Index estimate, which can include
+                            modelled values (executive compensation packages,
+                            recently-revised stakes, opaque holdings) that
+                            aren't in the per-asset breakdown. The
+                            <em>Other</em> slice is that gap — net worth minus
+                            disclosed Public + Private + Cash + reduced for
+                            liabilities.
+                        </p>
                     </div>
 
                     <div class="aggregate-card" x-show="profileFacts.length > 0">
@@ -2458,7 +2477,7 @@
     <script src="/js/tabs/scraper.js?v=5"></script>
     <script src="/js/tabs/export.js?v=1"></script>
     <script src="/js/tabs/panel.js?v=5"></script>
-    <script src="/js/tabs/profile.js?v=26"></script>
+    <script src="/js/tabs/profile.js?v=27"></script>
     <script src="/js/tabs/insights.js?v=18"></script>
     <script src="/app.js?v=36"></script>
 </body>

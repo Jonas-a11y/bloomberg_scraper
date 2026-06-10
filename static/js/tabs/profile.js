@@ -200,19 +200,44 @@ function profileMixin() {
         // aren't a positive segment of the asset pie. Mirrors the
         // helper used in the pair-comparison panel for consistency.
         profileAssetSegments(p) {
+            // Bloomberg's `net_worth_usd` is their proprietary Billionaires
+            // Index estimate. Public/Private/Cash totals are the disclosed
+            // breakdown but they often don't sum to net_worth — the gap is
+            // unallocated value (executive comp packages, modelled estimates,
+            // recently-revised holdings not yet in the per-asset table).
+            // We surface that gap as an "Other" segment so the donut sums to
+            // the headline net-worth figure and the user isn't left wondering
+            // where the missing tens of billions are.
             if (!p) return [];
-            const total = (p.public_assets_total || 0)
-                        + (p.private_assets_total || 0)
-                        + (p.cash_assets_total || 0);
-            if (!total) return [];
+            const pub = p.public_assets_total || 0;
+            const priv = p.private_assets_total || 0;
+            const cash = p.cash_assets_total || 0;
+            const disclosed = pub + priv + cash;
+            // Net of liabilities — that's what `net_worth_usd` reflects.
+            const liab = p.liabilities_value || 0;
+            const netWorth = p.net_worth_usd || 0;
+            // gap = the slice of net worth NOT explained by disclosed
+            // assets (after adding liabilities back, since liabilities
+            // already reduced net_worth). Floor at 0 — we don't render
+            // a negative segment when our totals overshoot.
+            const gap = Math.max(0, netWorth + liab - disclosed);
+            // If everything we have sums to ~net_worth (within 2%), don't
+            // bother showing a tiny rounding sliver.
+            const showGap = gap > 0.02 * Math.max(netWorth, 1);
             const segs = [
-                { label: 'Public',  color: '#5ad1c7',
-                  value: p.public_assets_total || 0 },
-                { label: 'Private', color: '#a37fdc',
-                  value: p.private_assets_total || 0 },
-                { label: 'Cash',    color: '#6ec1e4',
-                  value: p.cash_assets_total || 0 },
+                { label: 'Public',  color: '#5ad1c7', value: pub },
+                { label: 'Private', color: '#a37fdc', value: priv },
+                { label: 'Cash',    color: '#6ec1e4', value: cash },
             ];
+            if (showGap) {
+                segs.push({
+                    label: 'Other',
+                    color: '#bdc3c7',
+                    value: gap,
+                });
+            }
+            const total = segs.reduce((s, x) => s + x.value, 0);
+            if (!total) return [];
             return segs
                 .filter(s => s.value > 0)
                 .map(s => ({ ...s, share: s.value / total }));

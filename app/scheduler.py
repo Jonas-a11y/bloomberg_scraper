@@ -494,7 +494,15 @@ def run_news_refresh(force=False, person_ids=None):
             name = full_name or common_name
             _news_refresh_state["current"] = name
             try:
-                articles = fetch_news_for_person(name) if name else []
+                # Per-person related-terms filter strips GDELT
+                # false-positives (the article was named in a
+                # sidebar, not the actual story).
+                from app.news import related_terms_for_person
+                terms = related_terms_for_person(person_id)
+                articles = (
+                    fetch_news_for_person(name, related_terms=terms)
+                    if name else []
+                )
                 if articles:
                     conn = get_db()
                     now = datetime.now().isoformat()
