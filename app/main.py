@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 
 
@@ -100,6 +101,14 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Bloomberg Scraper", lifespan=lifespan)
+
+# Compress JSON responses on the wire. Big payloads:
+#   /api/billionaires/{id}/history    ~600KB → ~80KB
+#   /api/analytics/concentration      ~600KB → ~50KB
+#   /api/persons/{id}/profile         ~300KB → ~40KB
+# minimum_size=500 skips the trivially-small responses where the
+# CPU + Content-Encoding overhead isn't worth it.
+app.add_middleware(GZipMiddleware, minimum_size=500)
 
 app.include_router(dashboard.router, prefix="/api")
 app.include_router(billionaires.router, prefix="/api")

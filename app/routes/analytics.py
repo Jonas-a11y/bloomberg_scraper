@@ -1,10 +1,9 @@
 from fastapi import APIRouter, Query
 
 from app.database import get_db, get_snapshot_dates
+from app.insights_cache import cached_or_compute
 
 router = APIRouter()
-
-_concentration_cache: dict = {}
 
 
 @router.get("/analytics/by-industry")
@@ -83,36 +82,39 @@ def concentration(min_count: int = 100):
     we have history for. Note: wealth_history is built from profile pages of
     persons known to the app at backfill time, so historical top-N skews toward
     today's survivors — anyone who dropped off the list before we started
-    tracking them isn't represented. From now on, dropouts retain their history."""
-    conn = get_db()
-    latest = conn.execute("SELECT MAX(scraped_at) FROM snapshots").fetchone()[0]
-    key = (latest, min_count)
-    cached = _concentration_cache.get(key)
-    if cached is not None:
-        conn.close()
-        return cached
-    cursor = conn.execute("""
-        WITH ranked AS (
-            SELECT date, net_worth_usd,
-                   ROW_NUMBER() OVER (PARTITION BY date ORDER BY net_worth_usd DESC) AS rk
-            FROM wealth_history
-        )
-        SELECT date,
-               SUM(net_worth_usd)                                              AS total,
-               SUM(CASE WHEN rk = 1   THEN net_worth_usd ELSE 0 END)           AS top_1,
-               SUM(CASE WHEN rk <= 10 THEN net_worth_usd ELSE 0 END)           AS top_10,
-               SUM(CASE WHEN rk <= 100 THEN net_worth_usd ELSE 0 END)          AS top_100,
-               COUNT(*)                                                        AS count
-        FROM ranked
-        GROUP BY date
-        HAVING count >= ?
-        ORDER BY date
-    """, (min_count,))
-    rows = [dict(row) for row in cursor.fetchall()]
-    conn.close()
-    _concentration_cache.clear()
-    _concentration_cache[key] = rows
-    return rows
+    tracking them isn't represented. From now on, dropouts retain their history.
+
+    Cached on disk via insights_cache. Cold compute is ~1.3s on the
+    1.8M-row wealth_history table; cached lookup is single-digit ms
+    and survives process restarts (the in-memory dict didn't)."""
+    def _compute():
+        conn = get_db()
+        try:
+            cursor = conn.execute("""
+                WITH ranked AS (
+                    SELECT date, net_worth_usd,
+                           ROW_NUMBER() OVER (PARTITION BY date ORDER BY net_worth_usd DESC) AS rk
+                    FROM wealth_history
+                )
+                SELECT date,
+                       SUM(net_worth_usd)                                              AS total,
+                       SUM(CASE WHEN rk = 1   THEN net_worth_usd ELSE 0 END)           AS top_1,
+                       SUM(CASE WHEN rk <= 10 THEN net_worth_usd ELSE 0 END)           AS top_10,
+                       SUM(CASE WHEN rk <= 100 THEN net_worth_usd ELSE 0 END)          AS top_100,
+                       COUNT(*)                                                        AS count
+                FROM ranked
+                GROUP BY date
+                HAVING count >= ?
+                ORDER BY date
+            """, (min_count,))
+            return [dict(row) for row in cursor.fetchall()]
+        finally:
+            conn.close()
+
+    payload, _, _ = cached_or_compute(
+        "/analytics/concentration", {"min_count": min_count}, _compute,
+    )
+    return payload
 
 
 @router.get("/snapshots/compare")

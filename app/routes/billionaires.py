@@ -4,6 +4,7 @@ from fastapi import APIRouter, Query
 
 from app.database import get_db
 from app.family.queries import get_person_profile
+from app.insights_cache import cached_or_compute
 
 router = APIRouter()
 
@@ -90,10 +91,33 @@ def billionaires_as_of(
     are kept and surfaced — they're real billionaires whose data widens
     the ranking. Their `person_id` will be NULL, signalling to the UI
     that no profile page exists.
+
+    The final response is cached on disk keyed on every query param —
+    the time-travel slider only varies `date`, so a few dozen distinct
+    cache entries cover the common path. SQL is ~150ms; cached lookup
+    is single-digit ms.
     """
     if not date or len(date) < 10:
         return {"error": "date required, format YYYY-MM-DD"}
     target = date[:10]
+
+    cache_params = {
+        "date": target, "limit": limit, "country": country,
+        "industry": industry, "gender": gender, "q": q, "sort": sort,
+    }
+    payload, _, _ = cached_or_compute(
+        "/billionaires/as-of", cache_params,
+        lambda: _compute_billionaires_as_of(
+            target, limit, country, industry, gender, q, sort,
+        ),
+    )
+    return payload
+
+
+def _compute_billionaires_as_of(target, limit, country, industry, gender, q, sort):
+    """Inner compute path for /billionaires/as-of. Pulled out so
+    cached_or_compute can wrap it (and so /billionaires/diff can call
+    it directly without going through the cache layer twice)."""
     target_year = int(target[:4])
 
     conn = get_db()
@@ -368,12 +392,28 @@ def billionaires_diff(
     - exited:  persons in `from_date` ranking who aren't in `to_date`
     - movers:  persons in both, with rank delta and net-worth delta
     Sorted lists, capped at 50 per category to keep payload small.
+
+    Cached on disk keyed on (from_date, to_date, top) — the underlying
+    rankings only change once a day, but this endpoint is hit on every
+    page load so paying 270ms each time wastes browser-perceived latency.
     """
     if not from_date or not to_date:
         return {"error": "from_date and to_date required"}
 
-    a = billionaires_as_of(date=from_date, limit=top)
-    b = billionaires_as_of(date=to_date, limit=top)
+    payload, _, _ = cached_or_compute(
+        "/billionaires/diff",
+        {"from_date": from_date[:10], "to_date": to_date[:10], "top": top},
+        lambda: _compute_billionaires_diff(from_date, to_date, top),
+    )
+    return payload
+
+
+def _compute_billionaires_diff(from_date, to_date, top):
+    """Inner compute path for /billionaires/diff. Bypasses the
+    /billionaires/as-of cache wrapper because we want fresh underlying
+    data (this top-level call is itself cached one layer up)."""
+    a = _compute_billionaires_as_of(from_date[:10], top, None, None, None, None, "rank")
+    b = _compute_billionaires_as_of(to_date[:10], top, None, None, None, None, "rank")
     if "error" in a:
         return a
     if "error" in b:
@@ -437,31 +477,40 @@ def billionaires_diff(
 def billionaires_data_range():
     """Min/max date for which we have *some* historical wealth data —
     Bloomberg wealth_history daily rows or Forbes historical_rankings
-    annual snapshots. Used by the time-travel slider to know its bounds."""
-    conn = get_db()
-    bloom = conn.execute(
-        "SELECT MIN(date) AS min_date, MAX(date) AS max_date FROM wealth_history"
-    ).fetchone()
-    forbes = conn.execute(
-        "SELECT MIN(year) AS min_y, MAX(year) AS max_y FROM historical_rankings"
-    ).fetchone()
-    conn.close()
-    candidates_min = []
-    candidates_max = []
-    if bloom and bloom["min_date"]:
-        candidates_min.append(bloom["min_date"])
-        candidates_max.append(bloom["max_date"])
-    if forbes and forbes["min_y"]:
-        candidates_min.append(f"{forbes['min_y']}-01-01")
-        candidates_max.append(f"{forbes['max_y']}-12-31")
-    if not candidates_min:
-        return {"min_date": None, "max_date": None}
-    return {
-        "min_date": min(candidates_min),
-        "max_date": max(candidates_max),
-        "bloomberg_start": bloom["min_date"] if bloom else None,
-        "forbes_years": [forbes["min_y"], forbes["max_y"]] if forbes and forbes["min_y"] else None,
-    }
+    annual snapshots. Used by the time-travel slider to know its bounds.
+
+    Cached on disk: the answer only changes once a day when a new scrape
+    extends the max bound, so paying 100ms on every page load is silly."""
+    def _compute():
+        conn = get_db()
+        try:
+            bloom = conn.execute(
+                "SELECT MIN(date) AS min_date, MAX(date) AS max_date FROM wealth_history"
+            ).fetchone()
+            forbes = conn.execute(
+                "SELECT MIN(year) AS min_y, MAX(year) AS max_y FROM historical_rankings"
+            ).fetchone()
+        finally:
+            conn.close()
+        candidates_min = []
+        candidates_max = []
+        if bloom and bloom["min_date"]:
+            candidates_min.append(bloom["min_date"])
+            candidates_max.append(bloom["max_date"])
+        if forbes and forbes["min_y"]:
+            candidates_min.append(f"{forbes['min_y']}-01-01")
+            candidates_max.append(f"{forbes['max_y']}-12-31")
+        if not candidates_min:
+            return {"min_date": None, "max_date": None}
+        return {
+            "min_date": min(candidates_min),
+            "max_date": max(candidates_max),
+            "bloomberg_start": bloom["min_date"] if bloom else None,
+            "forbes_years": [forbes["min_y"], forbes["max_y"]] if forbes and forbes["min_y"] else None,
+        }
+
+    payload, _, _ = cached_or_compute("/billionaires/data-range", None, _compute)
+    return payload
 
 
 @router.get("/billionaires/{person_id}/history")

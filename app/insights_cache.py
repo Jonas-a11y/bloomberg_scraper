@@ -248,6 +248,19 @@ def _build_warmup_specs() -> list[tuple[str, dict, Callable]]:
             None,
             lambda: ix.geo_migration(),
         ),
+        # Concentration: ~1.3s cold on the 1.8M-row wealth_history table
+        # — the biggest single response-time win once it's prewarmed.
+        (
+            "/analytics/concentration",
+            {"min_count": 100},
+            _concentration_compute,
+        ),
+        # data-range: cheap, but called on every page load. Keep it warm.
+        (
+            "/billionaires/data-range",
+            None,
+            _data_range_compute,
+        ),
         # Wealth correlation at the four UI presets — these are the
         # slowest endpoints, biggest win from caching.
         *[
@@ -265,6 +278,66 @@ def _build_warmup_specs() -> list[tuple[str, dict, Callable]]:
         # /api/scraper/insights-cache/warm endpoint.
         *_market_warmup_specs(),
     ]
+
+
+def _concentration_compute():
+    """Standalone compute for /analytics/concentration so the warmup
+    spec doesn't import the route module (which would create a cycle:
+    analytics.py → insights_cache → analytics.py)."""
+    from app.database import get_db
+    conn = get_db()
+    try:
+        cursor = conn.execute("""
+            WITH ranked AS (
+                SELECT date, net_worth_usd,
+                       ROW_NUMBER() OVER (PARTITION BY date ORDER BY net_worth_usd DESC) AS rk
+                FROM wealth_history
+            )
+            SELECT date,
+                   SUM(net_worth_usd)                                     AS total,
+                   SUM(CASE WHEN rk = 1   THEN net_worth_usd ELSE 0 END)  AS top_1,
+                   SUM(CASE WHEN rk <= 10 THEN net_worth_usd ELSE 0 END)  AS top_10,
+                   SUM(CASE WHEN rk <= 100 THEN net_worth_usd ELSE 0 END) AS top_100,
+                   COUNT(*)                                               AS count
+            FROM ranked
+            GROUP BY date
+            HAVING count >= ?
+            ORDER BY date
+        """, (100,))
+        return [dict(row) for row in cursor.fetchall()]
+    finally:
+        conn.close()
+
+
+def _data_range_compute():
+    """Standalone compute for /billionaires/data-range — see comment on
+    _concentration_compute for why we don't import the route module."""
+    from app.database import get_db
+    conn = get_db()
+    try:
+        bloom = conn.execute(
+            "SELECT MIN(date) AS min_date, MAX(date) AS max_date FROM wealth_history"
+        ).fetchone()
+        forbes = conn.execute(
+            "SELECT MIN(year) AS min_y, MAX(year) AS max_y FROM historical_rankings"
+        ).fetchone()
+    finally:
+        conn.close()
+    candidates_min, candidates_max = [], []
+    if bloom and bloom["min_date"]:
+        candidates_min.append(bloom["min_date"])
+        candidates_max.append(bloom["max_date"])
+    if forbes and forbes["min_y"]:
+        candidates_min.append(f"{forbes['min_y']}-01-01")
+        candidates_max.append(f"{forbes['max_y']}-12-31")
+    if not candidates_min:
+        return {"min_date": None, "max_date": None}
+    return {
+        "min_date": min(candidates_min),
+        "max_date": max(candidates_max),
+        "bloomberg_start": bloom["min_date"] if bloom else None,
+        "forbes_years": [forbes["min_y"], forbes["max_y"]] if forbes and forbes["min_y"] else None,
+    }
 
 
 def _market_warmup_specs():
