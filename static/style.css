@@ -1173,6 +1173,25 @@ h3 { font-size: 15px; margin-bottom: 12px; }
 .cohort-stat {
     text-align: center; padding: 10px 8px;
     border-radius: 6px; border: 1px solid;
+    /* Tiles are now <button>s (click to drill into the member
+       list). Reset the default button chrome so the look matches
+       the original <div> styling. */
+    font: inherit;
+    cursor: pointer;
+    transition: transform 0.1s ease, box-shadow 0.1s ease;
+}
+.cohort-stat:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+}
+.cohort-stat:disabled {
+    cursor: default;
+    opacity: 0.5;
+}
+.cohort-stat.active {
+    /* Subtle ring around the open tile so it's clear which list
+       is currently expanded. */
+    box-shadow: 0 0 0 2px #1a1a2e inset;
 }
 .cohort-num {
     display: block; font-size: 22px; font-weight: 700;
@@ -1198,6 +1217,36 @@ h3 { font-size: 15px; margin-bottom: 12px; }
 .cohort-bar .cohort-dropped { background: #f39c12; }
 .cohort-bar .cohort-died { background: #6c5ce7; }
 .cohort-bar .cohort-untracked { background: #bbb; }
+
+/* Drill-down list shown when a cohort tile is clicked. The header
+   announces the category; each row links to the person's profile
+   when we have one (Forbes-only cohort entries with no Bloomberg
+   link render as plain text). */
+.cohort-members {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid #f0f0f0;
+}
+.cohort-members-h {
+    font-size: 11px; color: #6c5ce7;
+    text-transform: uppercase; letter-spacing: 0.05em;
+    margin: 0 0 8px;
+}
+.cohort-members-list {
+    list-style: none; padding: 0; margin: 0;
+    max-height: 320px; overflow-y: auto;
+}
+.cohort-members-list li {
+    display: flex; justify-content: space-between; align-items: baseline;
+    gap: 12px;
+    padding: 4px 0;
+    font-size: 13px;
+    border-bottom: 1px solid #f7f6fb;
+}
+.cohort-members-list li > .muted.small {
+    flex-shrink: 0;
+    text-align: right;
+}
 
 /* Source-gap list */
 .source-gap-list {

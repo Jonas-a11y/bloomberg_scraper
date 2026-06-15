@@ -596,6 +596,9 @@ function insightsMixin() {
         // Charts/data
         insightsTopOverTime: null,
         insightsCohortSurvival: null,
+        // Which cohort category (still_listed / dropped / died /
+        // never_tracked) is expanded. null = all collapsed.
+        cohortOpenCategory: null,
         insightsInequality: null,
         insightsCountOverTime: null,
         insightsCorrelation: null,
@@ -700,6 +703,29 @@ function insightsMixin() {
             this.insightsCohortSurvival = await fetch(
                 `/api/insights/cohort-survival?${params}`
             ).then(r => r.json());
+            // Switching years clears the open drill-down so the user
+            // doesn't see a stale member list under a new cohort.
+            this.cohortOpenCategory = null;
+        },
+
+        // Click-to-expand on a cohort tile. Clicking the active tile
+        // collapses it; clicking a different tile switches.
+        toggleCohortCategory(category) {
+            if (this.cohortOpenCategory === category) {
+                this.cohortOpenCategory = null;
+            } else {
+                this.cohortOpenCategory = category;
+            }
+        },
+
+        // Human-readable category label for the drill-down header.
+        cohortCategoryLabel(category) {
+            return {
+                still_listed: 'Still listed',
+                dropped: 'Dropped off',
+                died: 'Died',
+                never_tracked: 'Never tracked',
+            }[category] || category || '';
         },
 
         async loadInsightsCorrelation() {

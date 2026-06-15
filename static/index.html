@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Bloomberg Scraper</title>
-    <link rel="stylesheet" href="/style.css?v=58">
+    <link rel="stylesheet" href="/style.css?v=59">
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
     <script src="https://cdn.jsdelivr.net/npm/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
@@ -727,22 +727,34 @@
                 </div>
                 <template x-if="insightsCohortSurvival">
                     <div class="cohort-stats">
-                        <div class="cohort-stat cohort-still">
+                        <button type="button" class="cohort-stat cohort-still"
+                                :class="{ active: cohortOpenCategory === 'still_listed' }"
+                                @click="toggleCohortCategory('still_listed')"
+                                :disabled="!insightsCohortSurvival.counts.still_listed">
                             <span class="cohort-num" x-text="insightsCohortSurvival.counts.still_listed"></span>
                             <span class="cohort-label">still listed</span>
-                        </div>
-                        <div class="cohort-stat cohort-dropped">
+                        </button>
+                        <button type="button" class="cohort-stat cohort-dropped"
+                                :class="{ active: cohortOpenCategory === 'dropped' }"
+                                @click="toggleCohortCategory('dropped')"
+                                :disabled="!insightsCohortSurvival.counts.dropped">
                             <span class="cohort-num" x-text="insightsCohortSurvival.counts.dropped"></span>
                             <span class="cohort-label">dropped off</span>
-                        </div>
-                        <div class="cohort-stat cohort-died">
+                        </button>
+                        <button type="button" class="cohort-stat cohort-died"
+                                :class="{ active: cohortOpenCategory === 'died' }"
+                                @click="toggleCohortCategory('died')"
+                                :disabled="!insightsCohortSurvival.counts.died">
                             <span class="cohort-num" x-text="insightsCohortSurvival.counts.died"></span>
                             <span class="cohort-label">died</span>
-                        </div>
-                        <div class="cohort-stat cohort-untracked">
+                        </button>
+                        <button type="button" class="cohort-stat cohort-untracked"
+                                :class="{ active: cohortOpenCategory === 'never_tracked' }"
+                                @click="toggleCohortCategory('never_tracked')"
+                                :disabled="!insightsCohortSurvival.counts.never_tracked">
                             <span class="cohort-num" x-text="insightsCohortSurvival.counts.never_tracked"></span>
                             <span class="cohort-label">never tracked</span>
-                        </div>
+                        </button>
                     </div>
                 </template>
                 <div class="cohort-bar-wrap" x-show="insightsCohortSurvival">
@@ -752,6 +764,38 @@
                         <span class="cohort-seg cohort-died" :style="`flex: ${insightsCohortSurvival?.counts?.died || 0}`"></span>
                         <span class="cohort-seg cohort-untracked" :style="`flex: ${insightsCohortSurvival?.counts?.never_tracked || 0}`"></span>
                     </div>
+                </div>
+                <!-- Click-to-expand member list. Names link to the
+                     person's profile when we have one; entries with
+                     person_id=null (Forbes-only rows Bloomberg never
+                     tracked) are shown as plain text. -->
+                <div class="cohort-members" x-show="cohortOpenCategory" x-transition>
+                    <h4 class="cohort-members-h">
+                        <span x-text="cohortCategoryLabel(cohortOpenCategory)"></span>
+                        (<span x-text="(insightsCohortSurvival?.members?.[cohortOpenCategory] || []).length"></span>)
+                    </h4>
+                    <ul class="cohort-members-list">
+                        <template x-for="m in (insightsCohortSurvival?.members?.[cohortOpenCategory] || [])" :key="m.person_id || m.name">
+                            <li>
+                                <template x-if="m.person_id">
+                                    <a class="metric-link" href="#"
+                                       @click.prevent="openProfile(m.person_id)"
+                                       x-text="m.name"></a>
+                                </template>
+                                <template x-if="!m.person_id">
+                                    <span x-text="m.name"></span>
+                                </template>
+                                <span class="muted small">
+                                    <span x-show="m.net_worth_usd"
+                                          x-text="'$' + (m.net_worth_usd/1e9).toFixed(1) + 'B'"></span>
+                                    <span x-show="m.death_date"
+                                          x-text="' · died ' + m.death_date.slice(0,7)"></span>
+                                    <span x-show="m.citizenship"
+                                          x-text="' · ' + m.citizenship"></span>
+                                </span>
+                            </li>
+                        </template>
+                    </ul>
                 </div>
             </div>
 
@@ -2502,7 +2546,7 @@
     <script src="/js/tabs/export.js?v=1"></script>
     <script src="/js/tabs/panel.js?v=5"></script>
     <script src="/js/tabs/profile.js?v=27"></script>
-    <script src="/js/tabs/insights.js?v=19"></script>
+    <script src="/js/tabs/insights.js?v=20"></script>
     <script src="/app.js?v=36"></script>
 </body>
 </html>
