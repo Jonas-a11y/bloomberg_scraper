@@ -1236,38 +1236,42 @@ function insightsMixin() {
         },
 
         async fetchDeepDiveBillionaires() {
-            const f = this.insightsFilters;
-            const params = new URLSearchParams({
-                year_from: String(f.yearFrom), year_to: String(f.yearTo),
-                limit: '20',
-            });
+            // Use the live /api/billionaires endpoint with a server-side
+            // filter rather than reusing top-over-time-series. Two
+            // reasons:
+            //
+            // 1. The chart on the Insights tab ("Wealth by industry"
+            //    / "Wealth by country") aggregates the latest snapshot
+            //    grouped by p.industry / p.citizenship. The user
+            //    expects the deep-dive total to match the bar height —
+            //    same query, same answer.
+            //
+            // 2. top-over-time-series pulls monthly wealth history for
+            //    every person in the union of yearly top-Ns. That's
+            //    tens of MB on the production dataset. The deep-dive
+            //    only shows the latest value, so the monthly history
+            //    is wasted bandwidth + compute.
+            const params = new URLSearchParams();
             if (this.deepDiveKind === 'country') {
                 params.set('country', this.deepDiveValue);
             } else {
                 params.set('industry', this.deepDiveValue);
             }
-            // Reuse top-over-time-series for the deep-dive's billionaire
-            // list — cheaper than a new endpoint and gives us full series.
-            // We only need the latest values, so just keep the last
-            // observation per person.
+            // Largest fortunes first — same order as the bar chart.
+            params.set('sort', '-net_worth_usd');
             const data = await fetch(
-                `/api/insights/top-over-time-series?${params}`
+                `/api/billionaires?${params}`
             ).then(r => r.json());
-            const persons = (data.persons || []).map(p => {
-                const last = p.series?.[p.series.length - 1];
-                return {
-                    person_id: p.person_id,
-                    name: p.name,
-                    citizenship: p.citizenship,
-                    industry: p.industry,
-                    image_url: p.image_url,
-                    net_worth_usd: last?.v || 0,
-                    last_obs: last?.ym,
-                };
-            }).filter(p => p.net_worth_usd > 0)
-              .sort((a, b) => b.net_worth_usd - a.net_worth_usd)
-              .slice(0, 20);
-            const total = persons.reduce((s, p) => s + (p.net_worth_usd || 0), 0);
+            const persons = (data.data || []).map(r => ({
+                person_id: r.person_id,
+                name: r.common_name,
+                citizenship: r.citizenship,
+                industry: r.industry,
+                net_worth_usd: r.net_worth_usd,
+            })).filter(p => p.net_worth_usd > 0);
+            const total = persons.reduce(
+                (s, p) => s + (p.net_worth_usd || 0), 0
+            );
             return { persons, total_wealth_usd: total };
         },
 

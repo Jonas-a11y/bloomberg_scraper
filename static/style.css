@@ -1015,6 +1015,13 @@ h3 { font-size: 15px; margin-bottom: 12px; }
 
 .deep-dive-list {
     list-style: none; padding: 0; margin: 0 0 8px;
+    /* The deep-dive panel can fit ~6 rows above the list before
+       scrolling kicks in on the panel itself. With 100+ billionaires
+       in some industries, give the list its own bounded scroll
+       region so the user can flick through without losing the
+       summary stats above. */
+    max-height: 60vh;
+    overflow-y: auto;
 }
 .deep-dive-list li {
     display: flex; align-items: baseline; gap: 8px;
