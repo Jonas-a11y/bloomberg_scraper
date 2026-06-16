@@ -30,7 +30,14 @@ def _wikidata_get(params, timeout=15):
     )
 
 
-def search_candidates(name, limit=5):
+def search_candidates(name, limit=10):
+    """Wikidata wbsearchentities search.
+
+    `limit=10` is intentional (default 5 misses billionaires whose
+    historical homonyms outrank them — Hugh Grosvenor 7th Duke sits
+    at position #6 behind five older dukes / disambig pages). The
+    resolver walks all candidates looking for a business-hint match,
+    so a wider net = better recall."""
     try:
         r = _wikidata_get({
             "action": "wbsearchentities",

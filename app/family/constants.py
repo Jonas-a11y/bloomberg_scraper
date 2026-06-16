@@ -107,4 +107,22 @@ BUSINESS_HINTS = (
     # Bloomberg lists family-controlled fortunes as e.g. "Walton family";
     # Wikidata describes those as "American family" / "wealthy family".
     "family", "dynasty",
+    # Wider noun phrases observed in real Wikidata descriptions of
+    # billionaires we were missing:
+    "oligarch",                 # Roman Abramovich, Mikhail Fridman
+    "fashion designer",          # Ralph Lauren
+    "real estate", "property developer",
+    "fund manager", "asset manager", "money manager",
+    "trader",                    # Stan Druckenmiller, Steve Cohen
+    "art dealer", "art collector",
+    "shipping", "shipowner",
+    "manufacturer",              # car/textile manufacturers without "industrialist"
+    # NOTE: do NOT add "landowner", "duke", "earl", "baron", "prince" —
+    # Wikidata's search frequently returns 19th-century aristocrats
+    # ahead of the current titled holder. The current Hugh Grosvenor
+    # (7th Duke, b. 1991) IS already described as "British aristocrat
+    # and businessman" — "businessman" catches him without dragging in
+    # the 1825-1899 1st Duke whose description reads "English landowner".
 )
+
+
