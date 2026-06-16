@@ -275,85 +275,30 @@ function familiesMixin() {
                 edges: new vis.DataSet([...familyEdgeVis, ...entityLinkVis, ...entityEdgeVis]),
             };
             const options = {
-                nodes: {
-                    shape: 'dot',
-                    font: { size: 11, color: '#1a1a2e' },
-                    borderWidth: 0,
-                    scaling: { min: 8, max: 38 },
-                    // shadow gives the network depth without the constant
-                    // micro-motion that physics-driven layouts use to convey
-                    // hierarchy
-                    shadow: { enabled: true, color: 'rgba(0,0,0,0.10)', size: 4, x: 0, y: 1 },
-                },
-                edges: {
-                    smooth: { type: 'continuous', roundness: 0.2 },
-                    selectionWidth: 1.5,
-                },
+                nodes: { shape: 'dot', font: { size: 11, color: '#1a1a2e' }, borderWidth: 0, scaling: { min: 8, max: 38 } },
+                edges: { smooth: { type: 'continuous' } },
                 physics: {
-                    // barnesHut converges faster than forceAtlas2Based on
-                    // sparse multi-cluster graphs (which is what we have:
-                    // many small family pods linked by a few entity nodes).
-                    // forceAtlas pulled disconnected components toward the
-                    // origin, leaving them piled up in the centre.
-                    solver: 'barnesHut',
-                    barnesHut: {
-                        gravitationalConstant: -2200,
-                        centralGravity: 0.12,
-                        springLength: 110,
-                        springConstant: 0.04,
-                        damping: 0.55,           // higher damping → settles faster
-                        avoidOverlap: 0.3,
-                    },
-                    // adaptiveTimestep lets vis ramp up the integrator step
-                    // size once kinetic energy drops, hitting the
-                    // stabilization target in fewer ticks
-                    adaptiveTimestep: true,
-                    stabilization: {
-                        enabled: true,
-                        iterations: 400,
-                        updateInterval: 50,
-                        // Run iterations OFFSCREEN before the first paint —
-                        // that's what removes the visible "spinning" on
-                        // page open. The user only sees the final layout.
-                        fit: true,
-                        onlyDynamicEdges: false,
-                    },
+                    solver: 'forceAtlas2Based',
+                    forceAtlas2Based: { gravitationalConstant: -55, springLength: 90, springConstant: 0.06 },
+                    stabilization: { iterations: 250 },
                 },
-                interaction: {
-                    hover: true,
-                    tooltipDelay: 150,
-                    // Freeze the layout when the user lets go of a node so
-                    // dragging one billionaire doesn't wobble half the graph.
-                    dragNodes: true,
-                    dragView: true,
-                    zoomView: true,
-                },
+                interaction: { hover: true, tooltipDelay: 150 },
             };
 
             if (this.familiesNetwork) this.familiesNetwork.destroy();
-
-            // Hide the container until vis finishes stabilizing — that's
-            // the simplest way to make the graph appear in its final layout
-            // instead of flying in. Restored on stabilizationIterationsDone.
-            container.style.opacity = '0';
-            container.style.transition = 'opacity 240ms ease';
-
             this.familiesNetwork = new vis.Network(container, data, options);
 
-            // Once the layout has settled, fade the canvas in AND turn
-            // physics off. With physics off, the graph stays still:
-            //   - opening the page doesn't show drift
-            //   - hovering doesn't nudge neighbours
-            //   - a node the user drags stays where they put it
-            // Re-enabled briefly on path-highlight / data refresh so new
-            // nodes find their place, then frozen again.
-            this.familiesNetwork.once('stabilizationIterationsDone', () => {
-                this.familiesNetwork.setOptions({ physics: { enabled: false } });
-                container.style.opacity = '1';
-            });
-            // Belt-and-braces: if stabilization never fires (e.g. tiny graph
-            // that converges in <1 tick), reveal anyway after a short delay.
-            setTimeout(() => { container.style.opacity = '1'; }, 800);
+            // After 5 seconds of physics, freeze the layout so the graph
+            // stops drifting. The user can still drag individual nodes —
+            // they just won't pull their neighbours along anymore.
+            // 5s is enough for forceAtlas2Based to settle on graphs of
+            // this size, while staying under the threshold where idle
+            // motion starts to feel distracting.
+            setTimeout(() => {
+                if (this.familiesNetwork) {
+                    this.familiesNetwork.setOptions({ physics: { enabled: false } });
+                }
+            }, 5000);
 
             this.familiesNetwork.on('click', params => {
                 if (params.nodes.length === 0) return;
@@ -363,17 +308,6 @@ function familiesMixin() {
                     this.openPanel(parseInt(nodeId.slice(1), 10));
                 } else if (nodeId.startsWith('e')) {
                     this.openEntityPanel(parseInt(nodeId.slice(1), 10));
-                }
-            });
-
-            // Double-click on empty space resets the view to fit all
-            // nodes — handy after the user has zoomed in or dragged
-            // nodes around. Animated for polish.
-            this.familiesNetwork.on('doubleClick', params => {
-                if (params.nodes.length === 0) {
-                    this.familiesNetwork.fit({
-                        animation: { duration: 500, easingFunction: 'easeInOutQuad' },
-                    });
                 }
             });
         },
