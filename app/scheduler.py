@@ -21,7 +21,7 @@ _news_refresh_state = {"running": False, "done": 0, "total": 0, "errors": 0, "sa
 # the next scheduled run (could be 24h away), automatically retry with growing
 # backoff. Three attempts total — if all three fail, something is structurally
 # broken and another retry just hammers their endpoint.
-SCRAPE_RETRY_DELAYS_SEC = [600, 1800]  # 10 min after first failure, 30 min after second
+SCRAPE_RETRY_DELAYS_SEC = [300, 600, 900, 1200, 1600, 1800]  # 10 min after first failure, 30 min after second
 
 
 def get_schedule_config():
